@@ -40,21 +40,30 @@ namespace pnec {
 namespace converter {
 basalt::OpticalFlowInput::Ptr OpticalFlowFromOpenCV(const cv::Mat &image,
                                                     const int64_t timestamp) {
-  std::vector<basalt::ImageData> res(1);
-  res[0].img.reset(new basalt::ManagedImage<uint16_t>(image.cols, image.rows));
+  return OpticalFlowFromOpenCV(std::vector<cv::Mat>{image}, timestamp);
+}
 
-  const uint8_t *data_in = image.ptr();
-  uint16_t *data_out = res[0].img->ptr;
+basalt::OpticalFlowInput::Ptr
+OpticalFlowFromOpenCV(const std::vector<cv::Mat> &images,
+                      const int64_t timestamp) {
+  std::vector<basalt::ImageData> res(images.size());
+  for (size_t image_idx = 0; image_idx < images.size(); ++image_idx) {
+    const cv::Mat &image = images[image_idx];
+    res[image_idx].img.reset(
+        new basalt::ManagedImage<uint16_t>(image.cols, image.rows));
 
-  size_t full_size = image.cols * image.rows;
-  for (size_t i = 0; i < full_size; i++) {
-    int val = data_in[i];
-    val = val << 8;
-    data_out[i] = val;
+    const uint8_t *data_in = image.ptr();
+    uint16_t *data_out = res[image_idx].img->ptr;
+
+    size_t full_size = image.cols * image.rows;
+    for (size_t i = 0; i < full_size; i++) {
+      int val = data_in[i];
+      val = val << 8;
+      data_out[i] = val;
+    }
   }
 
   basalt::OpticalFlowInput::Ptr data(new basalt::OpticalFlowInput);
-
   data->t_ns = timestamp;
   data->img_data = res;
 
@@ -75,8 +84,18 @@ basalt::OpticalFlowInput::Ptr OpticalFlowFromOpenCV(const cv::Mat &image,
 pnec::features::KeyPoints KeyPointsFromOpticalFlow(
     const basalt::PNECOpticalFlowResult::Ptr optical_flow_result,
     bool undistort) {
+  return KeyPointsFromOpticalFlow(optical_flow_result, 0, undistort);
+}
+
+pnec::features::KeyPoints KeyPointsFromOpticalFlow(
+    const basalt::PNECOpticalFlowResult::Ptr optical_flow_result,
+    size_t camera_idx, bool undistort) {
   pnec::features::KeyPoints keypoints;
-  for (auto const &[id, observation] : optical_flow_result->observations[0]) {
+  if (camera_idx >= optical_flow_result->observations.size()) {
+    return keypoints;
+  }
+  for (auto const &[id, observation] :
+       optical_flow_result->observations[camera_idx]) {
     Eigen::Vector2d point(observation.transform(0, 2),
                           observation.transform(1, 2));
     if (undistort) {

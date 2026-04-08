@@ -43,19 +43,48 @@
 namespace pnec {
 namespace rel_pose_estimation {
 
+enum class CovarianceExperimentMode {
+  Original,
+  Isotropic,
+  Diagonal,
+  Normalized,
+};
+
+enum class WeightedRotationUpdateMode {
+  ScaledBearing,
+  FreezeRotation,
+  PaperLike,
+};
+
+enum class CeresInitMode {
+  Weighted,
+  NEC,
+  NECCeres,
+  Initial,
+};
+
 struct Options {
   bool use_nec_ = false;
 
   pnec::common::NoiseFrame noise_frame_ = pnec::common::Target;
   double regularization_ = 1.0e-13;
+  CovarianceExperimentMode covariance_mode_ =
+      CovarianceExperimentMode::Original;
+  double isotropic_covariance_value_ = 1.0e-6;
+  double normalized_covariance_trace_ = 1.0;
+  bool dump_covariance_stats_ = false;
 
   size_t weighted_iterations_ = 10;
   bool use_scf_ = true;
+  WeightedRotationUpdateMode weighted_rotation_update_mode_ =
+      WeightedRotationUpdateMode::ScaledBearing;
+  CeresInitMode ceres_init_mode_ = CeresInitMode::Weighted;
 
   bool use_ceres_ = true;
   ceres::Solver::Options ceres_options_ = ceres::Solver::Options();
 
   bool use_ransac_ = true;
+  double ransac_threshold_ = 1.0e-6;
   int max_ransac_iterations_ = 5000;
   int ransac_sample_size_ = 10;
 

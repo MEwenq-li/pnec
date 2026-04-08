@@ -128,7 +128,7 @@ Eigen::Matrix3d ComposeM(const opengv::bearingVectors_t &bvs_1,
                          const opengv::bearingVectors_t &bvs_2,
                          const Eigen::Matrix3d &rotation) {
   Eigen::Matrix3d M = Eigen::Matrix3d::Zero();
-  for (size_t i = 1; i < bvs_1.size(); i++) {
+  for (size_t i = 0; i < bvs_1.size(); i++) {
     Eigen::Vector3d n = bvs_1[i].cross(rotation * bvs_2[i]);
     M += n * n.transpose();
   }
@@ -143,7 +143,7 @@ Eigen::Matrix3d ComposeMPNEC(const opengv::bearingVectors_t &bvs_1,
   Eigen::Vector3d translation = pose.translation();
 
   Eigen::Matrix3d M = Eigen::Matrix3d::Zero();
-  for (size_t i = 1; i < bvs_1.size(); i++) {
+  for (size_t i = 0; i < bvs_1.size(); i++) {
     Eigen::Matrix3d bvs_1_hat = pnec::common::SkewFromVector(bvs_1[i]);
     Eigen::Vector3d n = bvs_1[i].cross(rotation * bvs_2[i]);
     M += n * n.transpose() /

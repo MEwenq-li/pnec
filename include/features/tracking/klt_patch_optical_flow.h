@@ -110,7 +110,7 @@ public:
 
     patch_coord = PatchT::pattern2.template cast<float>();
 
-    if (/*calib.intrinsics.size()*/ 1 > 1) {
+    if (calib.intrinsics.size() > 1) {
       Sophus::SE3d T_i_j = calib.T_i_c[0].inverse() * calib.T_i_c[1];
       computeEssential(T_i_j, E);
     }
@@ -130,12 +130,12 @@ public:
       t_ns = curr_t_ns;
 
       transforms.reset(new PNECOpticalFlowResult);
-      transforms->observations.resize(/*calib.intrinsics.size()*/ 1);
+      transforms->observations.resize(new_img_vec->img_data.size());
       transforms->t_ns = t_ns;
 
       pyramid.reset(new std::vector<basalt::ManagedImagePyr<u_int16_t>>);
-      pyramid->resize(/*calib.intrinsics.size()*/ 1);
-      for (size_t i = 0; i < /*calib.intrinsics.size()*/ 1; i++) {
+      pyramid->resize(new_img_vec->img_data.size());
+      for (size_t i = 0; i < new_img_vec->img_data.size(); i++) {
         pyramid->at(i).setFromImage(*new_img_vec->img_data[i].img,
                                     config.optical_flow_levels);
       }
@@ -150,8 +150,8 @@ public:
       old_pyramid = pyramid;
 
       pyramid.reset(new std::vector<basalt::ManagedImagePyr<u_int16_t>>);
-      pyramid->resize(/*calib.intrinsics.size()*/ 1);
-      for (size_t i = 0; i < /*calib.intrinsics.size()*/ 1; i++) {
+      pyramid->resize(new_img_vec->img_data.size());
+      for (size_t i = 0; i < new_img_vec->img_data.size(); i++) {
         pyramid->at(i).setFromImage(*new_img_vec->img_data[i].img,
                                     config.optical_flow_levels);
       }
@@ -166,7 +166,7 @@ public:
       BOOST_LOG_TRIVIAL(debug) << "Shifting points by" << offset;
 
       BOOST_LOG_TRIVIAL(debug) << "Tracking patches";
-      for (size_t i = 0; i < /*calib.intrinsics.size()*/ 1; i++) {
+      for (size_t i = 0; i < new_img_vec->img_data.size(); i++) {
         trackPoints(old_pyramid->at(i), pyramid->at(i),
                     transforms->observations[i],
                     new_transforms->observations[i], offset);
@@ -384,7 +384,7 @@ public:
       last_keypoint_id++;
     }
 
-    if (/*calib.intrinsics.size()*/ 1 > 1) {
+    if (transforms->observations.size() > 1) {
       trackPoints(pyramid->at(0), pyramid->at(1), new_poses0, new_poses1);
 
       for (const auto &kv : new_poses1) {
@@ -394,7 +394,7 @@ public:
   }
 
   void filterPoints() {
-    if (/*calib.intrinsics.size()*/ 1 < 2)
+    if (transforms->observations.size() < 2)
       return;
 
     std::set<KeypointId> lm_to_remove;

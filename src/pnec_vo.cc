@@ -130,9 +130,9 @@ int main(int argc, const char *argv[]) {
       parser.get<cv::String>(parser_counter++));
   const std::string pnec_config_filename(
       parser.get<cv::String>(parser_counter++));
-  const std::string tracking_config_filename(
-      parser.get<cv::String>(parser_counter++));
   const std::string tracking_calib_filename(
+      parser.get<cv::String>(parser_counter++));
+  const std::string tracking_config_filename(
       parser.get<cv::String>(parser_counter++));
   const std::string sequence_path(parser.get<cv::String>(parser_counter++));
   const std::string timestamp_path(parser.get<cv::String>(parser_counter++));
@@ -174,6 +174,7 @@ int main(int argc, const char *argv[]) {
                           << std::endl;
   pnec::input::DatasetLoader loader(sequence_path, image_ext, timestamp_path,
                                     false, 1.0);
+  BOOST_LOG_TRIVIAL(info) << "Dataset loader initialized";
 
   // get ground truth if provided
   std::vector<Sophus::SE3d> gt_poses;
@@ -185,6 +186,7 @@ int main(int argc, const char *argv[]) {
   /* =============================== TRACKING =============================== */
   basalt::KLTPatchOpticalFlow<float, basalt::Pattern52> tracking(
       tracking_config, tracking_calib, true, false);
+  BOOST_LOG_TRIVIAL(info) << "Tracking backend initialized";
 
   /* =============================== MATCHER ================================ */
   pnec::features::BaseMatcher::Ptr matcher;

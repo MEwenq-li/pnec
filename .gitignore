@@ -9,3 +9,5 @@
 third_party/opengv/
 venv/
 basalt_inspect/
+*.png
+*.csv

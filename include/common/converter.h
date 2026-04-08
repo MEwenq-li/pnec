@@ -47,6 +47,9 @@ namespace converter {
 
 basalt::OpticalFlowInput::Ptr OpticalFlowFromOpenCV(const cv::Mat &image,
                                                     const int64_t timestamp);
+basalt::OpticalFlowInput::Ptr
+OpticalFlowFromOpenCV(const std::vector<cv::Mat> &images,
+                      const int64_t timestamp);
 
 // void KeypointsFromOpticalFlow(basalt::OpticalFlowResult::Ptr result,
 //                               std::vector<cv::KeyPoint> &keypoints,
@@ -55,6 +58,9 @@ basalt::OpticalFlowInput::Ptr OpticalFlowFromOpenCV(const cv::Mat &image,
 pnec::features::KeyPoints KeyPointsFromOpticalFlow(
     const basalt::PNECOpticalFlowResult::Ptr optical_flow_result,
     bool undistort = true);
+pnec::features::KeyPoints KeyPointsFromOpticalFlow(
+    const basalt::PNECOpticalFlowResult::Ptr optical_flow_result,
+    size_t camera_idx, bool undistort);
 
 // pnec::features::KeyPoints KeypointsFromOpticalFlow(
 //     basalt::KLTPatchOpticalFlow<float, basalt::Pattern52> &tracking_,

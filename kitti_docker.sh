@@ -19,10 +19,8 @@ tracking_path="${tracking_config_path}/${sequence}.json"
 images_path="${dataset_path}/${sequence}/image_0"
 timestamp_path="${dataset_path}/${sequence}/times.txt"
 gt_path="${dataset_path}/${sequence}/poses.txt"
+visualization_path="${results_path}/${sequence}/vis/"
 gt=""
-
-# Copy ground truth into results folder
-cp $gt_path $results_path/$sequence/poses.txt
 
 if [ "$sequence" = "00" ] || [ "$sequence" = "01" ] || [ "$sequence" = "02" ]
 then
@@ -38,7 +36,11 @@ then
 fi
 
 [ ! -d "$results_path/$sequence" ] && mkdir -p "$results_path/$sequence"
+[ ! -d "$visualization_path" ] && mkdir -p "$visualization_path"
+
+# Copy ground truth into results folder
+cp $gt_path $results_path/$sequence/poses.txt
 
 output="$results_path/$sequence/"
 
-./build/pnec_vo $camera_config $pnec_config $tracking_path $tracking_calib_path $images_path $timestamp_path $output $no_skip ${gt}
+./build/pnec_vo $camera_config $pnec_config $tracking_calib_path $tracking_path $images_path $timestamp_path $output $visualization_path $no_skip ${gt}

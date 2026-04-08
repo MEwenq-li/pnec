@@ -3,13 +3,12 @@ project(pnec)
 
 include(CheckCXXCompilerFlag)
 CHECK_CXX_COMPILER_FLAG("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
-if(COMPILER_SUPPORTS_MARCH_NATIVE)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
-endif()
 
-set(CMAKE_BUILD_TYPE "Debug")
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release")
+endif()
 set(CMAKE_CXX_FLAGS "-std=c++17")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g -fPIC")
+set(CMAKE_CXX_FLAGS_RELEASE "-O1 -Wall -g -fPIC -fno-strict-aliasing")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,6 +30,7 @@ include(UpdateCacheVariable)
 # needed before the other so eigen3.4 is found in basalt/thirdparty/basalt-headers/thirdparty/eigen
 # instead of local eigen install which is not necessary 3.4
 add_subdirectory(third_party/basalt EXCLUDE_FROM_ALL)
+target_compile_options(basalt PRIVATE -O1 -fno-strict-aliasing -march=x86-64)
 # ============================= basalt =============================
 list(APPEND CMAKE_PREFIX_PATH "/usr/wiss/muhled/install")
 find_package(Boost COMPONENTS filesystem log log_setup REQUIRED)
@@ -40,7 +40,6 @@ find_package(SuiteSparse)
 find_package(Ceres REQUIRED)
 
 # ============================= suitesparse =============================
-add_definitions (-march=native)
 if (SUITESPARSE_FOUND)
     # On Ubuntu the system install of SuiteSparse (v3.4.0) up to at least
     # Ubuntu 13.10 cannot be used to link shared libraries.
@@ -118,6 +117,14 @@ file(GLOB_RECURSE MAIN_FILE "src/pnec_vo.cc")
 if (MAIN_FILE)
     list(REMOVE_ITEM ALL_LIBRARY_SRCS ${MAIN_FILE})
 endif()
+file(GLOB_RECURSE STEREO_MAIN_FILE "src/stereo_nec_vo.cc")
+if (STEREO_MAIN_FILE)
+    list(REMOVE_ITEM ALL_LIBRARY_SRCS ${STEREO_MAIN_FILE})
+endif()
+file(GLOB_RECURSE STEREO_PNEC_MAIN_FILE "src/stereo_pnec_vo.cc")
+if (STEREO_PNEC_MAIN_FILE)
+    list(REMOVE_ITEM ALL_LIBRARY_SRCS ${STEREO_PNEC_MAIN_FILE})
+endif()
 file(GLOB_RECURSE EXPERIMENT_CREATION_FILE "src/create_sim_experiments.cc")
 if (EXPERIMENT_CREATION_FILE)
     list(REMOVE_ITEM ALL_LIBRARY_SRCS ${EXPERIMENT_CREATION_FILE})
@@ -137,13 +144,24 @@ if (SIMULATION_FILE)
 endif()
 
 add_library(${PROJECT_NAME} STATIC ${ALL_LIBRARY_HDRS} ${ALL_LIBRARY_SRCS})
+set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_options(${PROJECT_NAME} PRIVATE -O1 -fno-strict-aliasing -march=x86-64)
 target_link_libraries(${PROJECT_NAME} ${THIRD_PARTY_LIBS} opengv)
 
 # ======================================================= PYTHON =======================================================
 add_subdirectory(python)
 
 add_executable(pnec_vo src/pnec_vo.cc ${THIRD_PARTY_FILES})
+target_compile_options(pnec_vo PRIVATE -O1 -fno-strict-aliasing -march=x86-64)
 target_link_libraries(pnec_vo ${THIRD_PARTY_LIBS} opengv ${PROJECT_NAME})
+
+add_executable(stereo_nec_vo src/stereo_nec_vo.cc ${THIRD_PARTY_FILES})
+target_compile_options(stereo_nec_vo PRIVATE -O1 -fno-strict-aliasing -march=x86-64)
+target_link_libraries(stereo_nec_vo ${THIRD_PARTY_LIBS} opengv ${PROJECT_NAME})
+
+add_executable(stereo_pnec_vo src/stereo_pnec_vo.cc ${THIRD_PARTY_FILES})
+target_compile_options(stereo_pnec_vo PRIVATE -O1 -fno-strict-aliasing -march=x86-64)
+target_link_libraries(stereo_pnec_vo ${THIRD_PARTY_LIBS} opengv ${PROJECT_NAME})
 
 add_executable(uncertainty_extraction src/uncertainty_extraction.cc ${THIRD_PARTY_FILES})
 target_link_libraries(uncertainty_extraction ${THIRD_PARTY_LIBS} opengv ${PROJECT_NAME})

@@ -1,0 +1,194 @@
+import argparse
+import math
+from pathlib import Path
+
+import numpy as np
+
+
+SEGMENT_LENGTHS = [100, 200, 300, 400, 500, 600, 700, 800]
+
+
+def quat_to_rot(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
+    q = np.array([qw, qx, qy, qz], dtype=float)
+    q = q / np.linalg.norm(q)
+    w, x, y, z = q
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ],
+        dtype=float,
+    )
+
+
+def est_row_to_pose(row: np.ndarray) -> np.ndarray:
+    T = np.eye(4)
+    T[:3, :3] = quat_to_rot(row[4], row[5], row[6], row[7])
+    T[:3, 3] = row[1:4]
+    return T
+
+
+def gt_row_to_pose(row: np.ndarray) -> np.ndarray:
+    T = np.eye(4)
+    T[:3, :4] = row.reshape(3, 4)
+    return T
+
+
+def rot_angle(R: np.ndarray) -> float:
+    return math.acos(float(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0)))
+
+
+def umeyama_alignment(X: np.ndarray, Y: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
+    mean_x = X.mean(axis=0)
+    mean_y = Y.mean(axis=0)
+    Xc = X - mean_x
+    Yc = Y - mean_y
+    cov = (Yc.T @ Xc) / X.shape[0]
+    U, D, Vt = np.linalg.svd(cov)
+    S = np.eye(3)
+    if np.linalg.det(U) * np.linalg.det(Vt) < 0:
+        S[-1, -1] = -1
+    R = U @ S @ Vt
+    var_x = np.mean(np.sum(Xc * Xc, axis=1))
+    scale = np.trace(np.diag(D) @ S) / var_x
+    t = mean_y - scale * R @ mean_x
+    return scale, R, t
+
+
+def trajectory_distances(poses: list[np.ndarray]) -> np.ndarray:
+    distances = [0.0]
+    for i in range(1, len(poses)):
+        step = np.linalg.norm(poses[i][:3, 3] - poses[i - 1][:3, 3])
+        distances.append(distances[-1] + step)
+    return np.asarray(distances)
+
+
+def last_frame_from_length(distances: np.ndarray, first_frame: int, length: float) -> int:
+    target_distance = distances[first_frame] + length
+    idx = np.searchsorted(distances, target_distance, side="left")
+    if idx >= len(distances):
+        return -1
+    return int(idx)
+
+
+def load_timing_stats(path: Path) -> tuple[float, float]:
+    with open(path, "r", encoding="utf-8") as handle:
+        header = handle.readline().strip().split()
+    raw = np.loadtxt(path, skiprows=1)
+    columns = {name: idx for idx, name in enumerate(header)}
+    return float(np.mean(raw[:, columns["TOTAL"]])), float(np.median(raw[:, columns["TOTAL"]]))
+
+
+def evaluate_sequence(est_path: Path, gt_path: Path, timing_path: Path) -> dict[str, float]:
+    est = np.loadtxt(est_path)
+    gt = np.loadtxt(gt_path)
+    if est.ndim == 1:
+        est = est[None, :]
+    if gt.ndim == 1:
+        gt = gt[None, :]
+
+    n = min(len(est), len(gt))
+    est_poses = [est_row_to_pose(row) for row in est[:n]]
+    gt_poses = [gt_row_to_pose(row) for row in gt[:n]]
+
+    first_pose_correction = gt_poses[0] @ np.linalg.inv(est_poses[0])
+    est_first_aligned = [first_pose_correction @ pose for pose in est_poses]
+
+    rpe1_errors = []
+    for i in range(n - 1):
+        rel_gt = gt_poses[i][:3, :3].T @ gt_poses[i + 1][:3, :3]
+        rel_est = est_first_aligned[i][:3, :3].T @ est_first_aligned[i + 1][:3, :3]
+        rpe1_errors.append(rot_angle(rel_gt.T @ rel_est))
+    rpe1_deg = np.sqrt(np.mean(np.square(rpe1_errors))) * 180.0 / np.pi
+
+    rpen_values = []
+    for distance in range(1, n):
+        errors = []
+        for i in range(n - distance):
+            rel_gt = gt_poses[i][:3, :3].T @ gt_poses[i + distance][:3, :3]
+            rel_est = est_first_aligned[i][:3, :3].T @ est_first_aligned[i + distance][:3, :3]
+            errors.append(rot_angle(rel_gt.T @ rel_est))
+        rpen_values.append(np.sqrt(np.mean(np.square(errors))))
+    rpen_deg = np.mean(rpen_values) * 180.0 / np.pi
+
+    est_positions = np.asarray([pose[:3, 3] for pose in est_first_aligned])
+    gt_positions = np.asarray([pose[:3, 3] for pose in gt_poses])
+    scale, R_align, t_align = umeyama_alignment(est_positions, gt_positions)
+
+    est_sim3 = []
+    for pose in est_first_aligned:
+        T = np.eye(4)
+        T[:3, :3] = R_align @ pose[:3, :3]
+        T[:3, 3] = scale * (R_align @ pose[:3, 3]) + t_align
+        est_sim3.append(T)
+
+    ate_rmse = np.sqrt(
+        np.mean(
+            np.sum(
+                (
+                    np.asarray([pose[:3, 3] for pose in est_sim3])
+                    - np.asarray([pose[:3, 3] for pose in gt_poses])
+                )
+                ** 2,
+                axis=1,
+            )
+        )
+    )
+
+    distances = trajectory_distances(gt_poses)
+    all_trel = []
+    for length in SEGMENT_LENGTHS:
+        for first in range(n):
+            last = last_frame_from_length(distances, first, length)
+            if last == -1:
+                continue
+            rel_est = np.linalg.inv(est_sim3[first]) @ est_sim3[last]
+            rel_gt = np.linalg.inv(gt_poses[first]) @ gt_poses[last]
+            rel_err = np.linalg.inv(rel_gt) @ rel_est
+            all_trel.append(np.linalg.norm(rel_err[:3, 3]) / float(length))
+    trel_pct = float(np.mean(all_trel) * 100.0)
+
+    mean_total_ms, median_total_ms = load_timing_stats(timing_path)
+
+    return {
+        "frames": n,
+        "RPE1_deg": float(rpe1_deg),
+        "RPEn_deg": float(rpen_deg),
+        "t_rel_pct": trel_pct,
+        "ATE_sim3_m": float(ate_rmse),
+        "Sim3_scale": float(scale),
+        "mean_total_ms": mean_total_ms,
+        "median_total_ms": median_total_ms,
+    }
+
+
+def print_block(name: str, stats: dict[str, float]) -> None:
+    print(name)
+    for key, value in stats.items():
+        print(f"{key}={value}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Compare two NEC result folders on one KITTI sequence.")
+    parser.add_argument("--base-dir", required=True)
+    parser.add_argument("--new-dir", required=True)
+    parser.add_argument("--gt-path", required=True)
+    args = parser.parse_args()
+
+    gt_path = Path(args.gt_path)
+    base_dir = Path(args.base_dir)
+    new_dir = Path(args.new_dir)
+
+    base = evaluate_sequence(base_dir / "rot_avg" / "poses.txt", gt_path, base_dir / "timing.txt")
+    new = evaluate_sequence(new_dir / "rot_avg" / "poses.txt", gt_path, new_dir / "timing.txt")
+
+    print_block("BASE", base)
+    print_block("NEW", new)
+    print("DELTA")
+    for key in ("RPE1_deg", "RPEn_deg", "t_rel_pct", "ATE_sim3_m", "mean_total_ms"):
+        print(f"{key}={new[key] - base[key]}")
+
+
+if __name__ == "__main__":
+    main()

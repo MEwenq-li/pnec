@@ -60,6 +60,13 @@ public:
                      const std::vector<Eigen::Matrix3d> &projected_covs,
                      const Sophus::SE3d &initial_pose,
                      std::vector<int> &inliers);
+  Sophus::SE3d Solve(const opengv::bearingVectors_t &bvs1,
+                     const opengv::bearingVectors_t &bvs2,
+                     const std::vector<Eigen::Matrix3d> &projected_covs,
+                     const std::vector<Eigen::Matrix3d> &host_covs,
+                     const std::vector<Eigen::Matrix3d> &target_covs,
+                     const Sophus::SE3d &initial_pose,
+                     std::vector<int> &inliers);
 
   Sophus::SE3d Solve(const opengv::bearingVectors_t &bvs1,
                      const opengv::bearingVectors_t &bvs2,
@@ -70,6 +77,14 @@ public:
   Sophus::SE3d Solve(const opengv::bearingVectors_t &bvs1,
                      const opengv::bearingVectors_t &bvs2,
                      const std::vector<Eigen::Matrix3d> &projected_covs,
+                     const Sophus::SE3d &initial_pose,
+                     std::vector<int> &inliers,
+                     pnec::common::FrameTiming &timing);
+  Sophus::SE3d Solve(const opengv::bearingVectors_t &bvs1,
+                     const opengv::bearingVectors_t &bvs2,
+                     const std::vector<Eigen::Matrix3d> &projected_covs,
+                     const std::vector<Eigen::Matrix3d> &host_covs,
+                     const std::vector<Eigen::Matrix3d> &target_covs,
                      const Sophus::SE3d &initial_pose,
                      std::vector<int> &inliers,
                      pnec::common::FrameTiming &timing);
@@ -91,6 +106,12 @@ public:
               const std::vector<Eigen::Matrix3d> &projected_covariances,
               const Sophus::SE3d &initial_pose);
   Sophus::SE3d
+  CeresSolver(const opengv::bearingVectors_t &bvs1,
+              const opengv::bearingVectors_t &bvs2,
+              const std::vector<Eigen::Matrix3d> &host_covariances,
+              const std::vector<Eigen::Matrix3d> &target_covariances,
+              const Sophus::SE3d &initial_pose);
+  Sophus::SE3d
   CeresSolverFull(const opengv::bearingVectors_t &bvs1,
                   const opengv::bearingVectors_t &bvs2,
                   const std::vector<Eigen::Matrix3d> &projected_covariances,
@@ -107,6 +128,17 @@ private:
                         opengv::bearingVectors_t &in_bvs1,
                         opengv::bearingVectors_t &in_bvs2,
                         std::vector<Eigen::Matrix3d> &in_proj_covs,
+                        const std::vector<int> &inliers);
+  void InlierExtraction(const opengv::bearingVectors_t &bvs1,
+                        const opengv::bearingVectors_t &bvs2,
+                        const std::vector<Eigen::Matrix3d> &proj_covs,
+                        const std::vector<Eigen::Matrix3d> &host_covs,
+                        const std::vector<Eigen::Matrix3d> &target_covs,
+                        opengv::bearingVectors_t &in_bvs1,
+                        opengv::bearingVectors_t &in_bvs2,
+                        std::vector<Eigen::Matrix3d> &in_proj_covs,
+                        std::vector<Eigen::Matrix3d> &in_host_covs,
+                        std::vector<Eigen::Matrix3d> &in_target_covs,
                         const std::vector<int> &inliers);
 
 protected:

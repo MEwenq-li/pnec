@@ -35,6 +35,7 @@
 
 #include "pnec_ceres.h"
 
+#include "ceres_compat.h"
 #include "pnec_residual.h"
 
 namespace pnec {
@@ -100,12 +101,8 @@ void PNECCeres::Optimize(const std::vector<Eigen::Vector3d> &bvs_1,
                                orientation_.coeffs().data());
     }
   }
-  ceres::Manifold *quaternion_manifold = new ceres::EigenQuaternionManifold;
-  // std::cout << "here" << std::endl;
-
-  problem.SetManifold(orientation_.coeffs().data(), quaternion_manifold);
-  // problem.SetParameterization(orientation_.coeffs().data(),
-  //                             new ceres::EigenQuaternionParameterization);
+  pnec::optimization::SetEigenQuaternionParameterization(
+      problem, orientation_.coeffs().data());
 
   ceres::Solve(options_, &problem, &summary_);
 }
@@ -157,12 +154,8 @@ void PNECCeres::Optimize(const std::vector<Eigen::Vector3d> &bvs_1,
   //                              orientation_.coeffs().data());
   //   }
   // }
-  ceres::Manifold *quaternion_manifold = new ceres::EigenQuaternionManifold;
-  // std::cout << "here" << std::endl;
-
-  problem.SetManifold(orientation_.coeffs().data(), quaternion_manifold);
-  // problem.SetParameterization(orientation_.coeffs().data(),
-  //                             new ceres::EigenQuaternionParameterization);
+  pnec::optimization::SetEigenQuaternionParameterization(
+      problem, orientation_.coeffs().data());
 
   ceres::Solve(options_, &problem, &summary_);
 }

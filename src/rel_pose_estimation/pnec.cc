@@ -36,6 +36,7 @@
 #include "pnec.h"
 
 #include "math.h"
+#include <algorithm>
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
 #include <chrono>
@@ -44,6 +45,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/Eigenvalues>
 #include <opencv2/core/eigen.hpp>
 #include <opengv/relative_pose/CentralRelativeAdapter.hpp>
 #include <opengv/relative_pose/CentralRelativeWeightingAdapter.hpp>
@@ -55,12 +57,125 @@
 #include <opengv/types.hpp>
 
 #include "common.h"
+#include "ceres_compat.h"
 #include "nec_ceres.h"
 #include "pnec_ceres.h"
 #include "scf.h"
 
 namespace pnec {
 namespace rel_pose_estimation {
+
+namespace {
+
+struct WeightedMinEigenvalueResidual {
+  WeightedMinEigenvalueResidual(const opengv::bearingVectors_t &bvs1,
+                                const opengv::bearingVectors_t &bvs2,
+                                const std::vector<double> &weights)
+      : bvs1_{bvs1}, bvs2_{bvs2}, weights_{weights} {}
+
+  bool operator()(const double *const orientation_ptr,
+                  double *residual_ptr) const {
+    Eigen::Map<const Eigen::Quaterniond> orientation(orientation_ptr);
+    const Eigen::Matrix3d rotation = orientation.normalized().toRotationMatrix();
+
+    Eigen::Matrix3d M = Eigen::Matrix3d::Zero();
+    for (size_t i = 0; i < bvs1_.size(); ++i) {
+      const Eigen::Vector3d n = bvs1_[i].cross(rotation * bvs2_[i]);
+      M += weights_[i] * n * n.transpose();
+    }
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigensolver(M);
+    if (eigensolver.info() != Eigen::Success) {
+      residual_ptr[0] = 1.0e12;
+      return true;
+    }
+
+    const double min_eigenvalue = std::max(eigensolver.eigenvalues()[0], 0.0);
+    residual_ptr[0] = std::sqrt(min_eigenvalue + 1.0e-18);
+    return true;
+  }
+
+private:
+  const opengv::bearingVectors_t &bvs1_;
+  const opengv::bearingVectors_t &bvs2_;
+  const std::vector<double> &weights_;
+};
+
+std::vector<double> NormalizeWeights(const std::vector<double> &weights) {
+  if (weights.empty()) {
+    return weights;
+  }
+
+  double weight_sum = 0.0;
+  for (const double weight : weights) {
+    weight_sum += weight;
+  }
+
+  const double mean_weight =
+      std::max(weight_sum / static_cast<double>(weights.size()), 1.0e-18);
+
+  std::vector<double> normalized_weights;
+  normalized_weights.reserve(weights.size());
+  for (const double weight : weights) {
+    normalized_weights.push_back(std::max(weight / mean_weight, 1.0e-18));
+  }
+  return normalized_weights;
+}
+
+Eigen::Matrix3d OptimizeWeightedRotationPaperLike(
+    const opengv::bearingVectors_t &bvs1, const opengv::bearingVectors_t &bvs2,
+    const std::vector<double> &weights, const Eigen::Matrix3d &initial_rotation,
+    const ceres::Solver::Options &base_options) {
+  Eigen::Quaterniond orientation(initial_rotation);
+
+  ceres::Problem problem;
+  ceres::CostFunction *cost_function =
+      new ceres::NumericDiffCostFunction<WeightedMinEigenvalueResidual,
+                                         ceres::CENTRAL, 1, 4>(
+          new WeightedMinEigenvalueResidual(bvs1, bvs2, weights));
+  problem.AddResidualBlock(cost_function, nullptr, orientation.coeffs().data());
+  pnec::optimization::SetEigenQuaternionParameterization(
+      problem, orientation.coeffs().data());
+
+  ceres::Solver::Options options = base_options;
+  options.linear_solver_type = ceres::DENSE_QR;
+  options.max_num_iterations =
+      std::max(20, static_cast<int>(base_options.max_num_iterations));
+  options.minimizer_progress_to_stdout = false;
+
+  ceres::Solver::Summary summary;
+  ceres::Solve(options, &problem, &summary);
+
+  return orientation.normalized().toRotationMatrix();
+}
+
+Sophus::SE3d SelectPNECCeresInit(
+    const pnec::rel_pose_estimation::Options &options, PNEC *solver,
+    const opengv::bearingVectors_t &bvs1, const opengv::bearingVectors_t &bvs2,
+    const std::vector<Eigen::Matrix3d> &projected_covariances,
+    const Sophus::SE3d &initial_pose, const Sophus::SE3d &es_solution) {
+  switch (options.ceres_init_mode_) {
+  case CeresInitMode::NEC:
+    return es_solution;
+  case CeresInitMode::NECCeres:
+    return solver->NECCeresSolver(bvs1, bvs2, es_solution);
+  case CeresInitMode::Initial:
+    return initial_pose;
+  case CeresInitMode::Weighted:
+  default:
+    if (options.weighted_iterations_ > 1) {
+      return solver->WeightedEigensolver(bvs1, bvs2, projected_covariances,
+                                         es_solution);
+    }
+    if (options.weighted_iterations_ == 1) {
+      return es_solution;
+    }
+    return initial_pose;
+  }
+}
+
+} // namespace
+
 PNEC::PNEC(const pnec::rel_pose_estimation::Options &options)
     : options_{options} {}
 
@@ -101,16 +216,9 @@ Sophus::SE3d PNEC::Solve(const opengv::bearingVectors_t &bvs1,
       return ES_solution;
     }
   } else {
-    Sophus::SE3d ceres_init;
-    if (options_.weighted_iterations_ > 1) {
-      BOOST_LOG_TRIVIAL(debug) << "Weighted" << std::endl;
-      ceres_init =
-          WeightedEigensolver(in_bvs1, in_bvs2, in_proj_covs, ES_solution);
-    } else if (options_.weighted_iterations_ == 1) {
-      ceres_init = ES_solution;
-    } else {
-      ceres_init = initial_pose;
-    }
+    Sophus::SE3d ceres_init = SelectPNECCeresInit(
+        options_, this, in_bvs1, in_bvs2, in_proj_covs, initial_pose,
+        ES_solution);
 
     Sophus::SE3d solution;
     if (options_.use_ceres_) {
@@ -121,6 +229,18 @@ Sophus::SE3d PNEC::Solve(const opengv::bearingVectors_t &bvs1,
     }
     return solution;
   }
+}
+
+Sophus::SE3d PNEC::Solve(const opengv::bearingVectors_t &bvs1,
+                         const opengv::bearingVectors_t &bvs2,
+                         const std::vector<Eigen::Matrix3d> &projected_covs,
+                         const std::vector<Eigen::Matrix3d> &host_covs,
+                         const std::vector<Eigen::Matrix3d> &target_covs,
+                         const Sophus::SE3d &initial_pose,
+                         std::vector<int> &inliers) {
+  pnec::common::FrameTiming dummy_timing = pnec::common::FrameTiming(0);
+  return Solve(bvs1, bvs2, projected_covs, host_covs, target_covs,
+               initial_pose, inliers, dummy_timing);
 }
 
 Sophus::SE3d PNEC::Solve(const opengv::bearingVectors_t &bvs1,
@@ -173,7 +293,8 @@ Sophus::SE3d PNEC::Solve(const opengv::bearingVectors_t &bvs1,
     return solution;
   } else {
     Sophus::SE3d ceres_init;
-    if (options_.weighted_iterations_ > 1) {
+    if (options_.ceres_init_mode_ == CeresInitMode::Weighted &&
+        options_.weighted_iterations_ > 1) {
       BOOST_LOG_TRIVIAL(debug) << "Weighted" << std::endl;
       tic = std::chrono::high_resolution_clock::now();
       ceres_init =
@@ -183,13 +304,12 @@ Sophus::SE3d PNEC::Solve(const opengv::bearingVectors_t &bvs1,
           std::chrono::duration_cast<std::chrono::milliseconds>(toc - tic);
       timing.avg_it_es_ = std::chrono::duration_cast<std::chrono::milliseconds>(
           (toc - tic) / options_.weighted_iterations_);
-    } else if (options_.weighted_iterations_ == 1) {
-      BOOST_LOG_TRIVIAL(debug) << "NEC" << std::endl;
-      ceres_init = ES_solution;
-      timing.it_es_ = std::chrono::milliseconds(0);
     } else {
-      ceres_init = initial_pose;
+      ceres_init = SelectPNECCeresInit(options_, this, in_bvs1, in_bvs2,
+                                       in_proj_covs, initial_pose,
+                                       ES_solution);
       timing.it_es_ = std::chrono::milliseconds(0);
+      timing.avg_it_es_ = std::chrono::milliseconds(0);
     }
     Sophus::SE3d solution;
     if (options_.use_ceres_) {
@@ -205,6 +325,89 @@ Sophus::SE3d PNEC::Solve(const opengv::bearingVectors_t &bvs1,
     }
     return solution;
   }
+}
+
+Sophus::SE3d PNEC::Solve(const opengv::bearingVectors_t &bvs1,
+                         const opengv::bearingVectors_t &bvs2,
+                         const std::vector<Eigen::Matrix3d> &projected_covs,
+                         const std::vector<Eigen::Matrix3d> &host_covs,
+                         const std::vector<Eigen::Matrix3d> &target_covs,
+                         const Sophus::SE3d &initial_pose,
+                         std::vector<int> &inliers,
+                         pnec::common::FrameTiming &timing) {
+  opengv::bearingVectors_t in_bvs1;
+  opengv::bearingVectors_t in_bvs2;
+  std::vector<Eigen::Matrix3d> in_proj_covs;
+  std::vector<Eigen::Matrix3d> in_host_covs;
+  std::vector<Eigen::Matrix3d> in_target_covs;
+
+  auto tic = std::chrono::high_resolution_clock::now(),
+       toc = std::chrono::high_resolution_clock::now();
+  Sophus::SE3d ES_solution = Eigensolver(bvs1, bvs2, initial_pose, inliers);
+  if (options_.use_ransac_) {
+    InlierExtraction(bvs1, bvs2, projected_covs, host_covs, target_covs,
+                     in_bvs1, in_bvs2, in_proj_covs, in_host_covs,
+                     in_target_covs, inliers);
+  } else {
+    in_bvs1 = bvs1;
+    in_bvs2 = bvs2;
+    in_proj_covs = projected_covs;
+    in_host_covs = host_covs;
+    in_target_covs = target_covs;
+  }
+  toc = std::chrono::high_resolution_clock::now();
+  timing.nec_es_ =
+      std::chrono::duration_cast<std::chrono::milliseconds>(toc - tic);
+
+  if (options_.use_nec_) {
+    Sophus::SE3d solution;
+    if (options_.use_ceres_) {
+      BOOST_LOG_TRIVIAL(debug) << "NECCeres" << std::endl;
+      tic = std::chrono::high_resolution_clock::now();
+      solution = NECCeresSolver(in_bvs1, in_bvs2, ES_solution);
+      toc = std::chrono::high_resolution_clock::now();
+      timing.ceres_ =
+          std::chrono::duration_cast<std::chrono::milliseconds>(toc - tic);
+    } else {
+      solution = ES_solution;
+      timing.ceres_ = std::chrono::milliseconds(0);
+    }
+    return solution;
+  }
+
+  Sophus::SE3d ceres_init;
+  if (options_.ceres_init_mode_ == CeresInitMode::Weighted &&
+      options_.weighted_iterations_ > 1) {
+    BOOST_LOG_TRIVIAL(debug) << "Weighted" << std::endl;
+    tic = std::chrono::high_resolution_clock::now();
+    ceres_init =
+        WeightedEigensolver(in_bvs1, in_bvs2, in_proj_covs, ES_solution);
+    toc = std::chrono::high_resolution_clock::now();
+    timing.it_es_ =
+        std::chrono::duration_cast<std::chrono::milliseconds>(toc - tic);
+    timing.avg_it_es_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+        (toc - tic) / options_.weighted_iterations_);
+  } else {
+    ceres_init = SelectPNECCeresInit(options_, this, in_bvs1, in_bvs2,
+                                     in_proj_covs, initial_pose, ES_solution);
+    timing.it_es_ = std::chrono::milliseconds(0);
+    timing.avg_it_es_ = std::chrono::milliseconds(0);
+  }
+
+  Sophus::SE3d solution;
+  if (options_.use_ceres_) {
+    BOOST_LOG_TRIVIAL(debug) << "CeresSymmetric" << std::endl;
+    tic = std::chrono::high_resolution_clock::now();
+    solution =
+        CeresSolver(in_bvs1, in_bvs2, in_host_covs, in_target_covs, ceres_init);
+    toc = std::chrono::high_resolution_clock::now();
+    timing.ceres_ =
+        std::chrono::duration_cast<std::chrono::milliseconds>(toc - tic);
+  } else {
+    solution = ceres_init;
+    timing.ceres_ = std::chrono::milliseconds(0);
+  }
+  return solution;
 }
 
 void PNEC::InlierExtraction(const opengv::bearingVectors_t &bvs1,
@@ -228,6 +431,29 @@ void PNEC::InlierExtraction(const opengv::bearingVectors_t &bvs1,
   }
 }
 
+void PNEC::InlierExtraction(const opengv::bearingVectors_t &bvs1,
+                            const opengv::bearingVectors_t &bvs2,
+                            const std::vector<Eigen::Matrix3d> &proj_covs,
+                            const std::vector<Eigen::Matrix3d> &host_covs,
+                            const std::vector<Eigen::Matrix3d> &target_covs,
+                            opengv::bearingVectors_t &in_bvs1,
+                            opengv::bearingVectors_t &in_bvs2,
+                            std::vector<Eigen::Matrix3d> &in_proj_covs,
+                            std::vector<Eigen::Matrix3d> &in_host_covs,
+                            std::vector<Eigen::Matrix3d> &in_target_covs,
+                            const std::vector<int> &inliers) {
+  InlierExtraction(bvs1, bvs2, proj_covs, in_bvs1, in_bvs2, in_proj_covs,
+                   inliers);
+  in_host_covs.clear();
+  in_host_covs.reserve(inliers.size());
+  in_target_covs.clear();
+  in_target_covs.reserve(inliers.size());
+  for (const auto inlier : inliers) {
+    in_host_covs.push_back(host_covs[inlier]);
+    in_target_covs.push_back(target_covs[inlier]);
+  }
+}
+
 Sophus::SE3d PNEC::Eigensolver(const opengv::bearingVectors_t &bvs1,
                                const opengv::bearingVectors_t &bvs2,
                                const Sophus::SE3d &initial_pose,
@@ -245,7 +471,7 @@ Sophus::SE3d PNEC::Eigensolver(const opengv::bearingVectors_t &bvs1,
             new opengv::sac_problems::relative_pose::EigensolverSacProblem(
                 adapter, options_.ransac_sample_size_));
     ransac.sac_model_ = eigenproblem_ptr;
-    ransac.threshold_ = 1.0e-6;
+    ransac.threshold_ = options_.ransac_threshold_;
     ransac.max_iterations_ = options_.max_ransac_iterations_;
 
     ransac.computeModel();
@@ -285,34 +511,38 @@ Sophus::SE3d PNEC::WeightedEigensolver(
     const std::vector<Eigen::Matrix3d> &projected_covariances,
     const Sophus::SE3d &initial_pose) {
   Sophus::SE3d rel_pose = initial_pose;
-  opengv::rotation_t old_rotation;
-
-  int seed = 1;
-  std::mt19937 generator(seed);
-  std::uniform_real_distribution<double> uniform01(0.0, 1.0);
   for (size_t iteration = 0; iteration < options_.weighted_iterations_ - 1;
        iteration++) {
     std::vector<double> weights;
+    weights.reserve(projected_covariances.size());
     for (size_t i = 0; i < projected_covariances.size(); i++) {
       double weight = pnec::common::Weight(
-          bvs1[i], bvs2[i], initial_pose.translation(),
-          initial_pose.rotationMatrix(), projected_covariances[i],
-          options_.regularization_, false);
-      weights.push_back(weight * 1.0e-8);
+          bvs1[i], bvs2[i], rel_pose.translation(), rel_pose.rotationMatrix(),
+          projected_covariances[i], options_.regularization_, false);
+      weights.push_back(weight);
     }
 
-    opengv::bearingVectors_t w_bvs2;
-    w_bvs2.reserve(bvs2.size());
-    for (size_t i = 0; i < bvs2.size(); i++) {
-      w_bvs2.push_back(bvs2[i] * std::sqrt(weights[i]));
+    opengv::rotation_t rotation = rel_pose.rotationMatrix();
+    if (options_.weighted_rotation_update_mode_ ==
+        WeightedRotationUpdateMode::ScaledBearing) {
+      const std::vector<double> normalized_weights = NormalizeWeights(weights);
+      opengv::bearingVectors_t w_bvs2;
+      w_bvs2.reserve(bvs2.size());
+      for (size_t i = 0; i < bvs2.size(); i++) {
+        w_bvs2.push_back(bvs2[i] * std::sqrt(normalized_weights[i]));
+      }
+
+      opengv::relative_pose::CentralRelativeAdapter adapter(
+          bvs1, w_bvs2, rel_pose.rotationMatrix());
+
+      rotation = opengv::relative_pose::eigensolver(adapter);
+    } else if (options_.weighted_rotation_update_mode_ ==
+               WeightedRotationUpdateMode::PaperLike) {
+      const std::vector<double> normalized_weights = NormalizeWeights(weights);
+      rotation = OptimizeWeightedRotationPaperLike(
+          bvs1, bvs2, normalized_weights, rel_pose.rotationMatrix(),
+          options_.ceres_options_);
     }
-
-    opengv::relative_pose::CentralRelativeAdapter adapter(
-        bvs1, w_bvs2, rel_pose.rotationMatrix());
-
-    old_rotation = initial_pose.rotationMatrix();
-
-    opengv::rotation_t rotation = opengv::relative_pose::eigensolver(adapter);
 
     std::vector<Eigen::Matrix3d> Ai, Bi;
     // TODO: Host and Target frame
@@ -339,8 +569,15 @@ Sophus::SE3d PNEC::WeightedEigensolver(
       }
     }
 
-    opengv::translation_t translation =
-        pnec::optimization::scf(Ai, Bi, best_point, 10);
+    opengv::translation_t translation;
+    if (options_.use_scf_) {
+      translation = pnec::optimization::scf(Ai, Bi, best_point, 10);
+    } else {
+      translation = pnec::common::TranslationFromM(pnec::common::ComposeMPNEC(
+          bvs1, bvs2, projected_covariances,
+          Sophus::SE3d(rotation, rel_pose.translation()),
+          options_.regularization_));
+    }
 
     rel_pose = Sophus::SE3d(rotation, translation);
   }
@@ -364,6 +601,29 @@ PNEC::CeresSolver(const opengv::bearingVectors_t &bvs1,
     bvs_2.push_back(bv);
   }
   optimizer.Optimize(bvs_1, bvs_2, projected_covariances,
+                     options_.regularization_, options_.noise_frame_);
+
+  return optimizer.Result();
+}
+
+Sophus::SE3d
+PNEC::CeresSolver(const opengv::bearingVectors_t &bvs1,
+                  const opengv::bearingVectors_t &bvs2,
+                  const std::vector<Eigen::Matrix3d> &host_covariances,
+                  const std::vector<Eigen::Matrix3d> &target_covariances,
+                  const Sophus::SE3d &initial_pose) {
+  pnec::optimization::PNECCeres optimizer;
+  optimizer.InitValues(Eigen::Quaterniond(initial_pose.rotationMatrix()),
+                       initial_pose.translation());
+  std::vector<Eigen::Vector3d> bvs_1;
+  std::vector<Eigen::Vector3d> bvs_2;
+  for (const auto &bv : bvs1) {
+    bvs_1.push_back(bv);
+  }
+  for (const auto &bv : bvs2) {
+    bvs_2.push_back(bv);
+  }
+  optimizer.Optimize(bvs_1, bvs_2, host_covariances, target_covariances,
                      options_.regularization_);
 
   return optimizer.Result();
@@ -386,7 +646,8 @@ PNEC::CeresSolverFull(const opengv::bearingVectors_t &bvs1,
     bvs_2.push_back(bv);
   }
 
-  optimizer.Optimize(bvs_1, bvs_2, projected_covariances, regularization);
+  optimizer.Optimize(bvs_1, bvs_2, projected_covariances, regularization,
+                     options_.noise_frame_);
 
   return optimizer.Result();
 }

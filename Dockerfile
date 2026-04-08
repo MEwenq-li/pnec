@@ -32,4 +32,4 @@ RUN git clone https://gitlab.com/VladyslavUsenko/basalt.git && \
 
 COPY . /app/pnec/
 WORKDIR /app/pnec
-RUN mkdir build && cd build && cmake .. && make -j8
+RUN mkdir build && cd build && cmake .. && make -j4

@@ -49,6 +49,14 @@ namespace rel_pose_estimation {
 class Frame2Frame {
 public:
   using Ptr = std::shared_ptr<Frame2Frame>;
+  struct FeatureBundle {
+    opengv::bearingVectors_t host_bvs;
+    opengv::bearingVectors_t target_bvs;
+    std::vector<Eigen::Matrix3d> host_covs;
+    std::vector<Eigen::Matrix3d> target_covs;
+    std::vector<Eigen::Matrix3d> projected_covs;
+  };
+
   Frame2Frame(const pnec::rel_pose_estimation::Options &options);
   ~Frame2Frame();
 
@@ -57,7 +65,8 @@ public:
                      pnec::FeatureMatches &matches, Sophus::SE3d prev_rel_pose,
                      std::vector<int> &inliers,
                      pnec::common::FrameTiming &frame_timing,
-                     bool ablation = false, std::string ablation_folder = "");
+                     bool ablation = false, std::string ablation_folder = "",
+                     std::string results_folder = "");
 
   Sophus::SE3d AlignFurther(pnec::frames::BaseFrame::Ptr frame1,
                             pnec::frames::BaseFrame::Ptr frame2,
@@ -69,11 +78,10 @@ public:
   GetAblationResults() const;
 
 private:
-  Sophus::SE3d PNECAlign(const opengv::bearingVectors_t &bvs1,
-                         const opengv::bearingVectors_t &bvs2,
-                         const std::vector<Eigen::Matrix3d> &projected_covs,
+  Sophus::SE3d PNECAlign(const FeatureBundle &features,
                          Sophus::SE3d prev_rel_pose, std::vector<int> &inliers,
                          pnec::common::FrameTiming &frame_timing,
+                         std::string results_folder = "",
                          std::string ablation_folder = "");
 
   void AblationAlign(const opengv::bearingVectors_t &bvs1,
@@ -83,10 +91,12 @@ private:
 
   void GetFeatures(pnec::frames::BaseFrame::Ptr frame1,
                    pnec::frames::BaseFrame::Ptr frame2,
-                   pnec::FeatureMatches &matches,
-                   opengv::bearingVectors_t &bvs1,
-                   opengv::bearingVectors_t &bvs2,
-                   std::vector<Eigen::Matrix3d> &proj_covs);
+                   pnec::FeatureMatches &matches, FeatureBundle &features);
+  void ApplyCovarianceExperimentMode(FeatureBundle &features) const;
+  void DumpCovarianceStats(const FeatureBundle &features,
+                          const std::string &results_folder) const;
+  static std::string CovarianceExperimentModeName(
+      CovarianceExperimentMode mode);
 
 protected:
   // Parameters

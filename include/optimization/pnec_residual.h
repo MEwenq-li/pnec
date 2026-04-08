@@ -60,13 +60,13 @@ struct PNECResidualHost {
         std::sin(theta_ptr[0]) * std::sin(phi_ptr[0]), std::cos(theta_ptr[0]));
     Eigen::Map<const Eigen::Quaternion<T>> orientation(orientation_ptr);
     const Eigen::Matrix<T, 3, 3> rotation_m = orientation.toRotationMatrix();
-    const Eigen::Matrix<double, 3, 3> bv_1_hat =
-        pnec::common::SkewFromVector(rotation_m * bv_1_);
+    const Eigen::Matrix<double, 3, 3> rot_bv_2_hat =
+        pnec::common::SkewFromVector(rotation_m * bv_2_);
 
     residual_ptr[0] =
         (translation.transpose() * bv_1_.cross(rotation_m * bv_2_))(0, 0) /
-        std::sqrt((translation.transpose() * bv_1_hat * cov_ *
-                   bv_1_hat.transpose() * translation)(0, 0) +
+        std::sqrt((translation.transpose() * rot_bv_2_hat * cov_ *
+                   rot_bv_2_hat.transpose() * translation)(0, 0) +
                   regularization_);
     return true;
   }

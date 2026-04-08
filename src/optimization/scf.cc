@@ -87,7 +87,7 @@ Eigen::Matrix3d construct_E(std::vector<Eigen::Matrix3d> &Ai,
   std::vector<double> phi_B = phi_G(Bi, t);
   double prod_phi_B = 1.0;
   std::vector<double> frac;
-  frac.resize(Ai.size());
+  frac.reserve(Ai.size());
   for (size_t i = 0; i < Ai.size(); i++) {
     frac.push_back(phi_A[i] / phi_B[i]);
     prod_phi_B *= phi_B[i];
@@ -112,7 +112,7 @@ Eigen::Matrix3d alt_construct_E(std::vector<Eigen::Matrix3d> &Ai,
   std::vector<double> phi_A = phi_G(Ai, t);
   std::vector<double> phi_B = phi_G(Bi, t);
   std::vector<double> frac;
-  frac.resize(Ai.size());
+  frac.reserve(Ai.size());
   for (size_t i = 0; i < Ai.size(); i++) {
     frac.push_back(phi_A[i] / phi_B[i]);
   }

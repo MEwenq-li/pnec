@@ -1,0 +1,706 @@
+                                                                                                                                                                                      2022 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+
+
+
+
+                                                                                                                                                                 The Probabilistic Normal Epipolar Constraint for Frame-To-Frame Rotation
+                                                                                                                                                                               Optimization under Uncertain Feature Positions
+
+                                                                                                                                                                   Dominik Muhle*† , Lukas Koestler*† , Nikolaus Demmel† , Florian Bernard‡ and Daniel Cremers†
+                                                                                                                                                                                    †                                     ‡
+                                                                                                                                                                                      Technical University of Munich        University of Bonn
+2022 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) | 978-1-6654-6946-3/22/$31.00 ©2022 IEEE | DOI: 10.1109/CVPR52688.2022.00186
+
+
+
+
+                                                                                                                                                              Figure 1. Illustration of the proposed method. The feature correspondences (left: lines) exhibit different position error distributions (left:
+                                                                                                                                                              ellipses). In contrast to the normal epipolar constraint (NEC) [34], our probabilistic normal epipolar constraint (PNEC) correctly accounts
+                                                                                                                                                              for the uncertainty and the geometry of the problem (middle) through a weighted (NEC) vs. unweighted (PNEC) averaging scheme (right).
+                                                                                                                                                              The NEC weighs all residuals equally (right: dash-dotted blue line), so that valuable information is lost. In contrast, our PNEC takes into
+                                                                                                                                                              account a proper weighting of individual residuals (right: dashed green line). Relative pose estimation with the PNEC instead of the NEC
+                                                                                                                                                              reduces the rotational-only versions of the RPE1 and the RPEn error by up to 42% and 55% on the KITTI dataset [20], respectively.
+
+
+                                                                                                                                                                                           Abstract                                             1. Introduction
+                                                                                                                                                                                                                                                    Extracting the 3D geometry of a scene from images is a
+                                                                                                                                                                 The estimation of the relative pose of two camera views                        long-standing problem in computer vision and has numer-
+                                                                                                                                                              is a fundamental problem in computer vision. Kneip et al.                         ous applications, including augmented and virtual reality,
+                                                                                                                                                              proposed to solve this problem by introducing the normal                          autonomous driving, or robots that can help with everyday
+                                                                                                                                                              epipolar constraint (NEC). However, their approach does                           life. One key component of many such approaches is the
+                                                                                                                                                              not take into account uncertainties, so that the accuracy                         estimation of the relative pose between two viewpoints of a
+                                                                                                                                                              of the estimated relative pose is highly dependent on ac-                         scene. For example, relative pose estimation is the founda-
+                                                                                                                                                              curate feature positions in the target frame. In this work,                       tion of geometric vision algorithms like structure from mo-
+                                                                                                                                                              we introduce the probabilistic normal epipolar constraint                         tion (SfM) or visual odometry (VO). Global SfM pipelines
+                                                                                                                                                              (PNEC) that overcomes this limitation by accounting for                           rely on accurate pairwise relative poses for use as ﬁxed mea-
+                                                                                                                                                              anisotropic and inhomogeneous uncertainties in the feature                        surements in global motion averaging [23, 48]. In VO, rel-
+                                                                                                                                                              positions. To this end, we propose a novel objective func-                        ative pose estimation is used to construct a trajectory from
+                                                                                                                                                              tion, along with an efﬁcient optimization scheme that effec-                      a stream of images. Like for all odometry systems, small
+                                                                                                                                                              tively minimizes our objective while maintaining real-time                        errors in the relative pose estimation lead to a drift in VO.
+                                                                                                                                                              performance. In experiments on synthetic data, we demon-                              The most widely used concept for relative pose estima-
+                                                                                                                                                              strate that the novel PNEC yields more accurate rotation                          tion is the essential matrix [43] in the calibrated case, or
+                                                                                                                                                              estimates than the original NEC and several popular rela-                         the fundamental matrix [25] in the general case. Respec-
+                                                                                                                                                              tive rotation estimation algorithms. Furthermore, we inte-                        tive approaches rely on correspondences between feature
+                                                                                                                                                              grate the proposed method into a state-of-the-art monocu-                         points, and are generally known to provide fast and accu-
+                                                                                                                                                              lar rotation-only odometry system and achieve consistently                        rate results [24]. However, approaches based on the essen-
+                                                                                                                                                              improved results for the real-world KITTI dataset.                                tial matrix suffer from fundamental problems, with the most
+                                                                                                                                                                                                                                                prominent being solution multiplicity [17, 25] and planar
+                                                                                                                                                                                                                                                degeneracy [33]. To address such issues, often it is nec-
+                                                                                                                                                                                                                                                essary to consider more involved solution strategies, which
+                                                                                                                                                                  * equal contribution. Project page: https://go.vision.in.tum.de/pnec          also lead to even more accurate relative poses as shown by
+
+
+                                                                                                                                                          978-1-6654-6946-3/22/$31.00 ©2022 IEEE                                         1809
+                                                                                                                                                          DOI 10.1109/CVPR52688.2022.00186
+                                                                                                                                                              Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+Kneip et al. [33] and in this work.                                             our discussion of related work to relative pose estimation,
+    To this end, Kneip et al. [34] proposed a constraint that                   uncertainty for feature correspondences, and visual odom-
+avoids these problems. Their epipolar plane normal copla-                       etry. For a broader overview we refer the reader to the ex-
+narity constraint (in later works just normal epipolar con-                     cellent books by Szeliski [57] and by Hartley and Zisser-
+straint, NEC) allows the estimation of the rotation inde-                       man [25] and to more topic-speciﬁc overview papers [6,59].
+pendent of the translation. A later work by Kneip and Ly-                           Relative Pose Estimation. Estimating the relative pose
+nen [33] provides a fast and reliable eigenvalue-based solver                   between two viewpoints is a long-standing problem in com-
+for the NEC, which allows for real-time relative pose esti-                     puter vision with the ﬁrst known solution proposed in 1913
+mation. This approach has been incorporated into rotation-                      by Kruppa [35]. Most methods either rely on previously
+only VO systems that estimate the rotation independent of                       computed feature correspondences (feature-based) or di-
+the translation and has led to promising results [9, 39].                       rectly consider the intensity differences between the two
+    Yet, like many VO systems, neither of them considers                        images (direct). While direct methods have recently shown
+the quality of the correspondences. After removing outliers                     promising results [14, 15], they are currently limited to
+from the feature matches, every match contributes equally                       images that exhibit photo consistency and hence cannot
+to the ﬁnal result. However, two-dimensional feature corre-                     be used for general problems, e.g. structure from mo-
+spondences exhibit different error distributions depending                      tion. Feature-based methods are considerably more robust
+on the content of the image and the speciﬁc method used                         to viewpoint and appearance changes. Therefore, we use
+to extract the correspondences, which can be seen in Fig. 2.                    feature correspondences within this paper.
+A correspondence lying on an edge is accurately localized                           Given feature correspondences, many methods [36, 41,
+perpendicular to the edge and possesses higher position un-                     43, 51, 55] estimate the essential matrix in the case of a cal-
+certainty parallel to it. This ﬁne-grained information about                    ibrated camera, or the fundamental matrix in the general
+the quality of the matches is completely ignored. It has been                   case. Nistér [51] proposes a minimal solution using poly-
+shown that considering the uncertainty is beneﬁcial for fun-                    nomials and root bracketing, while the solver proposed by
+damental matrix estimation [5]. While Kanazawa et al. [30]                      Longuet-Higgins [43] is linear and requires careful normal-
+argue that the uncertainty needs to be sufﬁciently inhomo-                      ization for good performance [24]. Alternatively, the rela-
+geneous to see the aforementioned beneﬁt, our experiments                       tive pose can be estimated directly using quaternions [16].
+show that the PNEC improves over the NEC even for ho-                               The essential matrix constraint deteriorates in zero-
+mogeneous uncertainty due to the geometry of the problem.                       translation situations without noise, due to it being a zero
+    The main objective of our work is to improve the ac-                        matrix. Most essential-matrix-based algorithms estimate
+curacy of rotation estimation techniques. We achieve this                       the correct motion only implicitly [33]. To address this
+based on the following technical contributions:                                 problem, recent works have proposed algorithms that can
+• We introduce the novel probabilistic normal epipolar con-                     estimate the rotation independent of the translation [34,42].
+  straint (PNEC), see Fig. 1, which for the ﬁrst time makes                     Our work is based on the normal epipolar constraint (NEC)
+  it possible to incorporate uncertainty information into the                   proposed by Kneip et al. [34] and the direct optimization
+  normal epipolar constraint (NEC).                                             scheme proposed in a follow-up paper [33]. Briales et
+• We propose an efﬁcient two-stage optimization strategy                        al. [4] show how to obtain the global minimum for the NEC,
+  for the PNEC that achieves real-time performance.                             however, their Shor relaxation is not applicable to our non-
+• We analyse singularities in the PNEC energy function and                      polynomial energy function.
+  address them with a simple regularization scheme.
+                                                                                    Uncertainty for Feature Correspondences. Kanade-
+• Experimentally, we compare our PNEC to several popu-
+                                                                                Lucas-Tomasi (KLT) tracks [45, 58] are widely used, and
+  lar relative pose estimation algorithms, namely 8pt [24],
+                                                                                the position uncertainty has been extensively investigated
+  7pt [25], Stewenius 5pt [56], Nistér 5pt [51], and
+                                                                                [19, 53, 54, 65]. Based on the unscented transform [60],
+  NEC [33], and demonstrate that our PNEC delivers more
+                                                                                the position uncertainty has also been integrated directly
+  accurate rotation estimates. Moreover, we integrate our
+                                                                                into the KLT tracking [13]. Zeisl et al. [64] have shown
+  PNEC into a visual odometry system and achieve state-
+                                                                                a method to obtain anisotropic and inhomogeneous covari-
+  of-the-art results on real-world data.
+                                                                                ances for SIFT [44] and SURF [1] features.
+• We publish the code for all experiments to facilitate future
+  research.                                                                         The integration of the position uncertainty into the align-
+                                                                                ment problem has been studied from a statistical perspec-
+2. Related Work                                                                 tive [28, 29], in the photogrammetry community [47], as
+                                                                                well as in the computer vision community [5, 30]. Brooks
+    The focus of this paper is the integration of feature po-                   et al. [5] show that covariance information can be used ben-
+sition uncertainties into frame-to-frame rotation estimation                    eﬁcially if the estimated covariance is sufﬁciently accurate.
+and the application to visual odometry. Hence, we restrict                      Kanazawa et al. [30] question the practical use of covari-
+
+
+
+
+                                                                         1810
+
+Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+Figure 2. Covariance ellipses for position uncertainties in KITTI
+seq. 07. The tracks are generated with KLT tracking. Our PNEC
+correctly considers such anisotropic inhomogeneous error distri-
+butions. For visualization purposes only a sub-image with sub-
+sampled and enlarged covariance ellipses is shown.                              Figure 3. Geometry of the normal epipolar constraint (NEC) [34].
+ance information if the covariance matrices are too similar                     Feature correspondences are given by pairs of unit bearing vectors
+                                                                                f i and f i in the host frame (O) and target frame (O ), respec-
+and nearly isotropic, however, Fig. 2 shows clearly that the
+                                                                                tively. Each pair of bearing vectors spans an epipolar plane (yel-
+covariance matrices for real-world data are highly inhomo-
+                                                                                low, orange, red), and has an associated normal vector ni given
+geneous and anisotropic.                                                        in Eq. 1. All epipolar planes intersect in the line deﬁned by the
+    Visual Odometry Systems. Most VO approaches uti-                            translation t (dashed line). The normal vectors span the epipolar
+lize 3D-to-2D correspondences together with a sliding win-                      normal plane (gray) that is orthogonal to t. For visual clarity we
+dow formulation. Still, relative pose estimation is com-                        show only three feature correspondences.
+monly used during initialization [49] and has been shown
+to provide excellent results on its own [11, 12]. Based on                      problem, we propose the probabilistic normal epipolar con-
+different solutions to the correspondence problem many vi-                      straint (PNEC), which is able to take into account the un-
+sual odometry systems have been proposed. They include                          certainty of feature positions by associating an anisotropic
+PTAM [31] and ORB-SLAM [49,50] with indirect features,                          covariance matrix to each feature point.
+approaches with KLT-tracks [61], as well as direct methods                         Notation. Vectors are denoted by bold lowercase let-
+like LSD-SLAM [15] and DSO [14]. Common among these                             ters (e.g. f ) and matrices by bold uppercase letters (e.g. Σ).
+approaches is a deteriorating performance for pure rotation                     The hat operator applied to a vector u ∈ R3 gives a skew-
+without inertial data.                                                          symmetric matrix û ∈ R3×3 that computes the cross prod-
+    Multiple rotation-only approaches that are robust against                   uct between two vectors, i.e. u×v = ûv. The superscript 
+pure rotation have been proposed recently [9,10,39]. Chon-                      denotes the transpose. A rigid-body transformation is rep-
+cha et al. [10] use the NEC to initialize a scale-consistent                    resented by a rotation matrix R ∈ SO(3) and a unit length
+map even for purely rotational motion. Chng et al. [9] and                      translation t ∈ R3 (t = 1 is imposed since the two-view
+Lee and Civera [39] use rotation averaging and rotation-                        problem is scale-invariant).
+only bundle adjustment on the basis of the NEC to further
+improve their results, respectively. While these approaches
+                                                                                3.1. Background – NEC
+show promising results on existing datasets, neither of them                       In the following we summarize the main idea of the NEC
+utilizes uncertainty information of feature correspondences                     proposed in [34]. Given are a host frame and a target frame
+in their system. We base our VO evaluation on MRO [9].                          that observe at least ﬁve feature correspondences that are
+                                                                                deﬁned by pairs of unit bearing vectors f i and f i in the
+3. Probabilistic Normal Epipolar Constraint                                     host and target frame, respectively (see Fig. 3). A 3D point
+   The normal epipolar constraint (NEC) [34] enforces the                       x in the target frame is transformed into the host frame
+coplanarity of epipolar plane normal vectors constructed                        by applying the relative rotation R and translation t s.t.
+from feature correspondences. However, feature correspon-                       x = Rx + t. In the ideal, error-free case, a single feature
+dences exhibit different error distributions that are not ac-                   correspondence, together with the two viewpoints, creates
+counted for in the NEC. For example, an edge-like fea-                          an epipolar plane, represented by its normal vector
+ture is well-localized perpendicular to the edge but not par-
+                                                                                                        ni = f i × Rf i .                          (1)
+allel to it, which is also known as the aperture problem.
+Fig. 2 clearly shows the anisotropicity and inhomogeneity
+                                                                                All normal vectors are orthogonal to the translation and they
+of the position distributions. Moreover, it is well-known
+                                                                                span the epipolar normal plane.
+that correspondences in all areas of the image are required
+to sufﬁciently constrain the 3D geometry [14, 49] and thus                         The rotation is estimated by enforcing the coplanarity of
+we cannot simply discard feature points. To address this                        the normal vectors. The residual of the model is given by
+
+
+
+
+                                                                         1811
+
+Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+the normalized epipolar error                                                           Algorithm 1: PNEC Optimization Scheme
+                                                                                          Initialize weights σ̃i,0 ← 1 ∀i
+                              ei = |t ni | ,
+                                                                                        1
+                                                                          (2)
+                                                                                          for s ← 1 to S do
+                                                                                        2       Optimize over R (cf. Sec. 4.3)
+i.e. the Euclidean distance of a normal vector to the epipolar
+                                                                                                Rs ← OptR λmin (M P (R; {σ̃i,s−1 }i ))
+normal plane. An energy function
+                                                                                        3       Optimize over t (cf. Sec. 4.2)
+                                     
+          E(R, t) =           e2i =            |t (f i × Rf i )|2       (3)                   ts ← Optt EP (Rs , t)
+                          i               i                                             4       Update the weights (cf. Eq. 4)
+                                                                                                σ̃i,s ← σi (Rs , ts ) ∀i
+is constructed from the residuals. For a more detailed                                      end
+derivation, we kindly refer the reader to the original pa-                              5   Joint Reﬁnement (cf. Sec. 4.4) using (RS , tS ) as starting value
+per [34] or the recent paper by Lee and Civera [38], which                                  R∗ , t∗ ← OptR,t EP (R, t)
+offers numerous geometric interpretations of the NEC.
+
+3.2. Deriving the PNEC
+                                                                                       4. Optimization
+      The probabilistic normal epipolar constraint (PNEC) ex-
+tends the NEC by incorporating uncertainty. To be more                                    To optimize the PNEC energy function Eq. 5, we propose
+speciﬁc, the PNEC allows the use of the anisotropic and                                a two-stage optimization scheme consisting of an alternat-
+inhomogeneous nature of the uncertainty of the feature po-                             ing iterative optimization and a joint reﬁnement. We pro-
+sition in the energy function. The feature position error is                           pose this two-stage approach since the eigenvalue-based op-
+considered in the target frame as shown in Fig. 1 and we                               timization of the NEC [33] cannot be naively applied to our
+assume that the position error follows a 2D Gaussian distri-                           derived PNEC energy function, which we show in Sec. 4.1.
+bution in the image plane with a known covariance matrix                               The whole PNEC optimization is given in Alg. 1 and we
+Σ2D,i per feature. In the supplementary we show how the                                detail the ﬁrst stage in Sec. 4.2 & Sec. 4.3, and the second
+covariance matrix can be extracted for KLT tracks from the                             stage in Sec. 4.4.
+KLT energy function using Laplace’s approximation [3].                                 4.1. Background – Optimizing the NEC
+      Given the 2D covariance matrix of the feature position in
+the target frame Σ2D,i , we propagate it through the unpro-                               Following [33], the NEC energy function Eq. 3 is re-
+jection function using the unscented transform [60] in order                           written as E(R, t) = t M (R)t using the (symmetric and
+to obtain the 3D covariance matrix Σi of the bearing vector                            positive-semideﬁnite) Gramian matrix
+f i . Using the unscented transform ensures full-rank covari-                                            
+ance matrices after the transform. We derive the details of                                     M (R) =      (f i × Rf i )(f i × Rf i ) . (6)
+the unscented transform in the supplementary material and                                                         i
+
+show qualitative examples.                                                             Because the energy is a quadratic form in the unit vector
+      Propagating this distribution to the normalized epipolar                         t, the optimization over the translation t can be carried out
+error gives the probabilistic distribution of the residual. Due                        analytically, i.e.
+to the linearity of the transformations, the distribution of the
+residual is a univariate Gaussian distribution N (0, σi2 ), with                                   min t M (R)t =               min λmin (M (R)) .             (7)
+                                                                                                R∈SO(3)                       R∈SO(3)
+variance                                                                                        t: t=1
+
+                σi2 (R, t) = t fˆi RΣi R fˆi  t .                      (4)          The eigenvector corresponding to the smallest eigenvalue
+                                                                                       λmin of M (R) minimizes the Rayleigh quotient t M (R)t
+   We integrate this variance into the cost-function of the                            over all unit-length vectors t. The constructed sub-problem
+NEC so that the Euclidean distance becomes the Mahalono-                               is then optimized over the rotation R using the Levenberg-
+bis distance [8] and deﬁne the PNEC Energy Function                                    Marquardt algorithm [40, 46], whereas the translation t is
+                                                                                       obtained by solving an eigenvalue problem.
+                     e2           |t (f × Rf  )|2
+                           i                         i        i
+    EP (R, t) =               =                                       ,   (5)          4.2. Optimizing the PNEC - Translation
+                      i
+                          σi2         i       t fˆi RΣi R fˆi  t
+                                                                                          The PNEC energy function Eq. 5 is the sum of
+which results in a weighted optimization problem. In the                               generalized Rayleigh quotients (GRQs) in the translation
+supplementary material we show a geometric interpretation                              t, and thus the optimum is not simply given by an eigen-
+of the above derivation.                                                               value as for the NEC. Optimizing the sum of GRQs over
+
+
+
+
+                                                                                1812
+
+Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+the unit sphere has recently been studied in the context of
+data science and wireless communications [2, 66, 67], and it
+has been shown by Zhang et al. [67] that the self-consistent-
+ﬁeld (SCF) algorithm [26] outperforms generic manifold
+optimization methods.
+   Since the sum of GRQs can exhibit many local min-
+ima [2], and thus the SCF iteration is not guaranteed to
+converge to a global optimum, we propose a simple, yet
+effective globalization strategy. To this end, we make use
+of the intrinsic low dimension of the unit sphere in R3 by                        Figure 4. Visualization of the NEC, the PNEC, and the PNEC
+sampling evenly distributed initial points tk efﬁciently us-                      with the regularization proposed in Sec. 4.5. The plot shows t in a
+ing the Fibonacci lattice [21]. We then pick the point with                       neighborhood of f (in polar coordinates), where the center of the
+the lowest objective function and apply the SCF iteration                         circle corresponds to t = f . For t = f , the PNEC shows a ﬁnite
+for N steps. Due to the inherent parallelism, the result-                         discontinuity, for which the limit depends on the direction. Our
+                                                                                  regularization eliminates this singularity while also maintaining
+ing optimization procedure can be implemented efﬁciently.
+                                                                                  the overall shape of the energy function.
+We present the effectiveness of the globalization strategy, as
+well as technical details for the SCF iteration, in the supple-
+mentary material.                                                                 and uses the solution of the ﬁrst stage as the starting value.
+4.3. Optimizing the PNEC - Rotation                                               Because R is a rotation matrix, we use manifold optimiza-
+                                                                                  tion [27] to optimize over the special orthogonal group
+   Kneip and Lynen [33] have shown how to optimize Eq. 7                          SO(3). For the translation t we use spherical coordinates
+efﬁciently using the Levenberg-Marquardt algorithm with                           with the radius ﬁxed to one in order to ensure that t = 1
+the rotation parametrized based on the Cayley transforma-                         holds. We would like to highlight that this joint reﬁnement
+tion [7]. To account for the weights in the PNEC energy                           is different from bundle adjustment. Most notably, it does
+function Eq. 5, we employ an optimization scheme similar                          not need to calculate the 3D position of the features.
+to the popular iteratively reweighted least squares (IRLS)
+algorithm [37]. Speciﬁcally, given a previous estimate of                         4.5. Singularities of the PNEC
+the rotation and translation (Rp , tp ), we compute ﬁxed
+weights σ̃i = σi (Rp , tp ) for all i, and deﬁne the weighted                          The PNEC energy function Eq. 5 has a singularity if the
+matrix                                                                            translation t is parallel to a bearing vector f i because the
+                                                                                  variance σi2 vanishes due to fˆi t = f i × t = 0. On the
+                            (f × Rf  )(f × Rf  )
+    M P (R; {σ̃i }i ) =             i        i          i   i
+                                                                     (8)          other hand, the numerator involves the same term and thus
+                             i
+                                                 σ̃i2                             the energy function is bounded and possesses a ﬁnite dis-
+                                                                                  continuity, as illustrated in Fig. 4. In the supplementary
+that depends only on the rotation R. The rotation is ob-                          material we present the derivation of the directional limit of
+tained by ﬁnding R such that the smallest eigenvalue of                           the energy function.
+M P (R; {σ̃i }i ) is minimal. After doing so based on the                              While the discontinuity is ﬁnite and less problematic
+optimizer of Kneip and Lynen [33], the weights {σ̃i }i are                        than an inﬁnite discontinuity, it still poses challenges. First,
+updated with new R, t.                                                            in contrast to the function values, the derivatives of the en-
+4.4. Optimizing the PNEC - Joint Reﬁnement                                        ergy function are not bounded, which is problematic for the
+                                                                                  joint reﬁnement. Second, the matrix M P , unlike the en-
+   After the ﬁrst stage we improve the result using joint re-                     ergy function, includes fˆi t only in its denominator not the
+ﬁnement. Speciﬁcally, we use a least-squares optimization                         numerator. Hence M P tends to inﬁnity for t → f i . To
+strategy, which is effective for ﬁnding a local optimum of                        address these issues, we consider a variance of the form
+the energy function given a good starting point [52]. For                         σi 2 = σi2 + c with regularization constant c > 0. Fig. 4
+the PNEC we optimize over                                                         shows the effect that the regularizer has on the energy func-
+                        ⎛                        ⎞2                               tion.
+                             t
+                                 (f   × Rf 
+                                             )
+       EP (R, t) =      ⎝          i      i     ⎠ , (9)
+                                ˆ        ˆ
+                                                                                  5. Evaluation
+                      i      t f i RΣi R f i t
+                                                                                      We evaluate the performance of the PNEC and compare
+the least-squares formulation of the constraint.       The                        it to the original NEC on simulated data as well as in a vi-
+Levenberg-Marquardt algorithm optimizes the objective                             sual odometry setting on real world data. On the simulated
+function in the rotation R and translation t simultaneously                       data, the proposed PNEC achieves better results than the
+
+
+
+
+                                                                           1813
+
+Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+                                      rotation                                                     translation                                                     rotation
+erot [deg]
+
+
+
+
+                                                                                                                                erot [deg]
+                                                                     et [deg]
+             0.2                                                                2                                                            0.2
+
+             0.1                                NEC                                                           NEC                            0.1                            NEC
+                                                PNEC (Ours)                                                   PNEC (Ours)                                                   PNEC (Ours)
+             0.0                                                                0                                                            0.0
+                   0            1          2           3         4                  0          1          2          3      4                      0         1          2          3      4
+                                noise scale [pix]                                              noise scale [pix]                                             noise scale [pix]
+                       (a) Experiment w/ translation: erot                              (b) Experiment w/ translation: et                          (c) Experiment w/o translation: erot
+
+ Figure 5. Experiments for omnidirectional cameras. Results are averaged over 10 000 random instantiations for anisotropic inhomogeneous
+ noise over different noise intensities. Our PNEC consistently leads to smaller errors compared to the NEC [33] for all noise levels. This
+ holds for rotation and translation estimates in the general case in Fig. 5a and Fig. 5b, respectively, as well as the rotation in the zero-
+ translation case in Fig. 5c.
+
+                                       rotation                                                    translation                                                     rotation
+                                                                                4
+
+
+
+
+                                                                                                                                erot [deg]
+erot [deg]
+
+
+
+
+                                                                     et [deg]
+
+
+             0.50
+
+                                                                                2                                                            0.2
+             0.25                               NEC                                                           NEC                                                           NEC
+                                                PNEC (Ours)                                                   PNEC (Ours)                                                   PNEC (Ours)
+             0.00                                                               0                                                            0.0
+                    0            1          2          3         4                  0          1          2          3      4                      0         1          2          3      4
+                                 noise scale [pix]                                             noise scale [pix]                                             noise scale [pix]
+                       (a) Experiment w/ translation: erot                              (b) Experiment w/ translation: et                          (c) Experiment w/o translation: erot
+
+ Figure 6. Experiments for pinhole cameras. Results are averaged over 10 000 random instantiations for anisotropic inhomogeneous noise
+ over different noise intensities. As for an omnidirectional camera in Fig. 5, our PNEC consistently leads to smaller errors compared to
+ the NEC [33]. For a pinhole camera the average errors are higher for both methods in comparison to an omnidirectional camera. The
+ experiments show that our PNEC is viable for the two most common camera types.
+
+
+ NEC and several other popular relative pose estimation al-                                                 as error metrics between the ground truth R, t and the esti-
+ gorithms. On KITTI we compare our approach to the MRO                                                      mated values R̃, t̃, where ∠(·) returns the angle of the rota-
+ algorithm [9] that uses the NEC for rotation estimation. For                                               tion matrix.
+ evaluating the PNEC we replace the ORB features in MRO                                                         Omnidirectional Camera. In this experiment we follow
+ with Kanade-Lucas-Tomasi (KLT) tracks [45,58], which al-                                                   the experimental outline proposed by Kneip and Lynen [33]
+ low for uncertainty extraction as discussed in Sec. 3.2, and                                               closely. We differ from the original experiments in the fol-
+ the NEC with the PNEC.                                                                                     lowing ways: we only add noise to the points in the second
+     In the supplementary material, a more detailed analy-                                                  frame; to compensate for the lack of noise in the ﬁrst frame,
+ sis including translational errors shows that compared to                                                  we scale the standard deviation by a factor of 2; we recreate
+ the NEC the PNEC is not only signiﬁcantly more accurate                                                    the experiment with different noise types based on the clas-
+ on average, but also more consistent. An ablation study                                                    siﬁcation by Brooks et al. [5] and generate individual co-
+ on KITTI demonstrates that all stages of our optimization                                                  variance matrices for each point. A detailed description of
+ scheme are essential for best results. We furthermore de-                                                  how the matrices are generated can be found in the supple-
+ tail all hyperparameter choice and detail the experimental                                                 mentary material. To show the effectiveness of the PNEC
+ protocol for reproducibility.                                                                              still holds even for pure rotation, we repeat the experiment
+                                                                                                            with the translational difference ﬁxed to zero.
+ 5.1. Frame-to-Frame Simulation
+                                                                                                                Fig. 5 shows the results for anisotropic inhomogeneous
+    With the simulated experiments we evaluate the perfor-                                                  noise for both experiments. The PNEC achieves consis-
+ mance of the PNEC in a frame-to-frame setting. The ex-                                                     tently better results for the rotation over all noise levels in
+ periments consist of randomly generated problems of two                                                    both experiments.
+ frames with known correspondences. We use
+                                                                                                                Pinhole Camera. Since most cameras are modeled as
+                                      erot := ∠(R R̃), and                                   (10)          pinhole cameras we also repeat the previous experiments
+                                                             
+                                                                                                            for pinhole cameras. The generation of the frames stays the
+                                        et := arccos (t t̃)                                   (11)          same. Points are sampled in viewing direction of the coordi-
+
+
+
+                                                                                                     1814
+
+Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+                                         O MNIDIRECTIONAL                                                  P INHOLE
+                                         W/ T                        W/O T                         W/ T                              W/O T
+  Noise level [px]          0.5          1.0           1.5        0.5 1.0 1.5         0.5          1.0            1.5            0.5 1.0 1.5
+  Metric [degree]         erot    et   erot     et   erot    et   erot erot erot    erot    et   erot     et   erot         et   erot erot erot
+  7pt [25]/8pt [24] 0.19 1.76 0.26 2.36 0.33 2.64 0.10 0.15 0.20 0.62 4.64 0.89 6.09 1.07 6.74 0.17 0.23 0.28 +95%
+  Stewenius 5pt [56] 0.23 2.34 0.30 2.97 0.37 3.38 0.18 0.30 0.33 0.61 3.14 0.71 4.04 0.89 4.57 0.46 0.64 0.77 +137%
+  Nistér 5pt [51]   1.61 6.82 1.64 7.55 1.92 8.42 0.29 0.39 0.42 3.26 8.72 3.46 9.80 3.76 10.39 0.51 0.67 0.83 +643%
+  NEC [33]           0.11 1.90 0.15 2.10 0.17 2.11 0.11 0.15 0.18 0.25 2.41 0.34 2.78 0.41 2.91 0.19 0.25 0.29 +24%
+  PNEC (Ours)        0.08 1.29 0.12 1.60 0.14 1.66 0.09 0.13 0.15 0.20 2.06 0.28 2.38 0.34 2.54 0.15 0.21 0.25
+
+Table 1. Rotation and translation error for different algorithms. Results for omnidirectional and pinhole cameras for experiments with and
+without translation over different noise levels for anisotropic and inhomogenous noise. Errors are averaged over 10 000 random problems
+each with 10 points. For experiments without translation (W/O T) only erot is reported, due to et not being deﬁned for zero translation. For
+all other algorithms apart from our PNEC we use the implementations from OpenGV [32]. (7pt) falls back to (8pt) for the non-minimal
+number of 10 correspondences. Our PNEC consistently achieves the best results, outperforming the NEC and several popular relative pose
+estimation algorithms. The last column gives the average error increase compared to the PNEC.
+
+
+nate system of the ﬁrst frame. The points are projected into                    changes, we compare the rotation estimation of MRO, as
+the world coordinate system and then into the two frames                        reported in [9], KLT-NEC, using KLT tracks and the NEC,
+using a pinhole camera model. The noise offset is added in                      and KLT-PNEC, the proposed PNEC with KLT tracks. Both
+the image plane. As with the omnidirectional camera exper-                      KLT-NEC and KLT-PNEC use the same KLT tracks for the
+iment, we repeat this experiment for pure rotation.                             relative rotation estimation.
+    Fig. 6 shows the results for the pinhole camera experi-                         The proposed PNEC can account for uncertainties in
+ment for anisotropic inhomogeneous noise. While the over-                       the feature correspondence positions that approximately
+all error for both methods is slightly higher for pinhole cam-                  follow a Gaussian distribution. To overcome outlier cor-
+eras than for omnidirectional cameras, the PNEC still out-                      respondences from failed KLT tracks, we use the same
+performs the NEC consistently.                                                  RANSAC [18] routine as the NEC for estimating the ro-
+    Tab. 1 gives a quantitative comparison of our PNEC to                       tation in the ﬁrst loop of Alg. 1.
+other relative pose estimation algorithms from the litera-                          Fig. 7 shows a trajectory generated from the rotation es-
+ture on the experiments presented in Fig. 5 and Fig. 6. Our                     timates of MRO and our approach. In Tab. 2 we compare
+PNEC consistently achieves the best result for both camera                      the mean performance over 5 runs of all approaches in the
+models for experiments with and without translation.                            rotation-only version of the Relative Pose Error (RPE) for
+    Additional experiments on other noise types show that                       n camera poses as deﬁned in [9]. The RPE evaluates the
+our PNEC outperforms the NEC even in cases of isotropic                         root mean square error (RMSE) of rotational residuals over
+and homogeneous noise. Although the covariance matrices                         frame pairs. The residual for a “time-step” Δ is
+are identical, the variance for each residual is different due
+to the geometry of the problem. Furthermore, our PNEC                                        Ei := ∠((R          
+                                                                                                       i Ri+Δ ) (R̃i R̃i+Δ )).                     (12)
+is robust against wrongly estimated noise parameters. We                        The RMSE is calculated over m := n − Δ residuals
+present the results to these experiments in the supplemen-                                                            1
+                                                                                                                m
+                                                                                                             1  2
+                                                                                                                       2
+tary material.
+                                                                                           RMSE(Δ) :=             Ei     .                         (13)
+5.2. Visual Odometry                                                                                        m i=1
+
+    Besides the simulated experiments, we also validate the                     For our evaluation we use
+PNEC on real world data, namely the highly popular KITTI
+odometry dataset [20]. We compare our results with the                                            RPE1 := RMSE(1), and                             (14)
+                                                                                                            n
+MRO algorithm by Chng et al. [9] that uses the optimiza-                                                  1 
+tion from [33]. For MRO and our algorithm we disable ro-                                          RPEn :=     RMSE(Δ),                             (15)
+                                                                                                          n
+                                                                                                                      Δ=1
+tation averaging and loop closure to focus on local rotation
+estimation. Our approach differs from MRO in two ways.                          to capture local frame-to-frame rotation error and long term
+    First, we use the KLT-based tracking implementation                         drift, respectively.
+also used in [61] to extract feature keypoints instead of ORB                      The results show the following: With a single exception
+features. Second, we replace the NEC with our PNEC for                          (seq. 01), using KLT tracks instead of ORB features is ben-
+relative rotation estimation. To capture the effects of both                    eﬁcial for relative rotation estimation with the NEC. PNEC
+
+
+
+                                                                         1815
+
+Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+             500
+                          ground truth                                                                       MRO [9] KLT-NEC KLT-PNEC
+             400          MRO                                                    feature creation                   36             30             30
+                          PNEC (Ours)                                            matching                          120
+y [meters]
+
+
+
+
+             300                                                                 optimization                        5             23             47
+                                                                                 total time                        161             53             77
+             200
+
+                                                                                Table 3. Average frame processing time in milliseconds. For
+             100
+                                                                                MRO, most of the time is needed for matching. KLT-NEC and
+                                                                                KLT-PNEC (Ours) achieve real-time performance on KITTI.
+              0
+
+                   −400      −200          0         200         400
+                                                                                6. Discussion and Future Work
+                                      x [meters]                                   While the proposed optimization scheme effectively op-
+Figure 7. Qualitative trajectory comparison for KITTI seq. 08. The              timizes the PNEC energy function, it relies on two consec-
+trajectory was generated with the estimated rotations of MRO [9]                utive stages, and is thus more involved than the optimiza-
+and PNEC, respectively, and are combined with the ground truth                  tion scheme proposed for the NEC [33]. Further and more
+translations for visualization purposes. Relative rotations com-                detailed limitations of the proposed approach are given in
+puted with the proposed PNEC lead to a signiﬁcantly reduced drift.
+                                                                                the supplementary material. Nevertheless, we have shown
+                            MRO [9]        KLT-NEC   KLT-PNEC                   in Sec. 5.3 that the proposed algorithm is real-time capa-
+                                                       (Ours)                   ble. As we explain in Sec. 4.2, the optimization over the
+        Seq.              RPE1 RPEn RPE1        RPEn RPE1 RPEn                  translation alone is an actively studied problem for which
+                                                                                no simple solution is known. Nevertheless, investigating
+        00                 0.360 8.670    0.125 5.922    0.119 3.429
+        01*                0.290 16.030   0.695 27.406   0.782 23.500
+                                                                                improved optimization schemes for our PNEC energy func-
+        02                 0.290 16.030   0.093 6.693    0.122 9.687            tion is a promising direction for future work. Recent works
+        03                 0.280 5.470    0.073 2.728    0.059 1.411            have shown that deep learning can boost the performance of
+        04                 0.040 1.080    0.041 0.619    0.038 0.463            visual odometry algorithms [22,62,63]. However, the focus
+        05                 0.250 11.360   0.079 4.489    0.070 3.203            of our work is on the correct modelling of the uncertainty
+        06                 0.180 4.720    0.073 3.162    0.042 2.322            for relative pose estimation, similar to [33, 34]. As such,
+        07                 0.280 7.490    0.105 4.640    0.074 2.065            while in our work we do not consider deep learning, we be-
+        08                 0.270 9.210    0.070 5.523    0.060 3.347            lieve that the integration of our ideas into learning systems
+        09                 0.280 9.850    0.088 3.533    0.080 3.514            may be an interesting direction for follow-up works. For
+        10                 0.380 13.250   0.073 3.959    0.072 4.094            example, the 2D feature position covariance matrices could
+Table 2. Quantitative comparison for KITTI. The signiﬁcant gap                  be predicted by a neural network.
+between MRO and KLT-NEC conﬁrms the beneﬁt of using KLT
+tracks. The difference between KLT-NEC and KLT-PNEC shows                       7. Conclusion
+the effectiveness of our PNEC compared to the NEC. *In seq. 01
+the KLT implementation of [61] fails and produces many wrong                        This paper shows how to utilise 2D feature position un-
+tracks with incorrect covariances due to self-similar structure.                certainties to obtain more accurate relative pose estimates
+outperforms NEC on 8 out of 11 sequences in both metrics,                       from a pair of images. To this end, we introduce the proba-
+often signiﬁcantly. Excluding seq. 01, the PNEC on aver-                        bilistic normal epipolar constraint (PNEC), and we propose
+age improves the RPE1 for frame-to-frame rotational error                       an effective optimization scheme that runs in real-time. In
+by 10% and the RPEn for long term drift by 19%.                                 synthetic experiments, the PNEC gives more accurate ro-
+                                                                                tation estimates than the NEC and several popular relative
+5.3. Runtime                                                                    rotation estimation algorithms for different noise levels and
+                                                                                for the pure-rotation case. The results on KITTI show, that
+   Tab. 3 shows the average frame processing time on the
+                                                                                the relative rotation estimation of the PNEC improves upon
+KITTI dataset for MRO, KLT-NEC and KLT-PNEC. The
+                                                                                the NEC-based MRO, a state-of-the-art rotation-only VO
+experiments were performed on a laptop with a 2.4 GHz
+                                                                                system, and can be used e.g. for global initialization in SfM.
+Quad-Core Intel Core i5 processor and 8 GB of memory.
+For MRO we use the same conﬁguration as for their demo.                         Acknowledgements
+The results show the runtime advantage of KLT tracks that                       We express our appreciation to our colleagues and the
+do not need feature matching like ORB features. While                           WARP student team who have supported us. We thank Lau-
+the proposed optimization scheme for the PNEC is slightly                       rent Kneip for providing us with the suppl. for [33]. This
+slower than the simpler NEC optimization algorithm, the                         work was supported by the ERC Advanced Grant SIMU-
+odometry with KLT-PNEC runs in real-time on KITTI.                              LACRON and by the Munich Center for Machine Learning.
+
+
+
+                                                                         1816
+
+Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+References                                                                      [17] O.D. Faugeras and S. Maybank. Motion from point matches:
+                                                                                     multiplicity of solutions. In Workshop on Visual Motion,
+ [1] Herbert Bay, Tinne Tuytelaars, and Luc Van Gool. Surf:                          1989. 1
+     Speeded up robust features. In ECCV, 2006. 2                               [18] Martin A Fischler and Robert C Bolles. Random sample
+ [2] Aohud Abdulrahman Binbuhaer. On Optimizing the Sum of                           consensus: a paradigm for model ﬁtting with applications to
+     Rayleigh Quotients on the Unit Sphere. PhD thesis, The Uni-                     image analysis and automated cartography. Communications
+     versity of Texas at Arlington, 2019. 5                                          of the ACM, 24, 1981. 7
+ [3] Christopher M. Bishop. Pattern recognition and machine                     [19] Wolfgang Förstner and Eberhard Gülch. A fast operator for
+     learning, 5th Edition. Springer, 2007. 4                                        detection and precise location of distinct points, corners and
+ [4] Jesus Briales, Laurent Kneip, and Javier Gonzalez-Jimenez.                      centres of circular features. In ISPRS intercommission con-
+     A certiﬁably globally optimal solution to the non-minimal                       ference on fast processing of photogrammetric data, 1987.
+     relative pose problem. In CVPR, 2018. 2                                         2
+                                                                                [20] Andreas Geiger, Philip Lenz, and Raquel Urtasun. Are we
+ [5] M.J. Brooks, W. Chojnacki, D. Gawley, and A. van den Hen-
+                                                                                     ready for Autonomous Driving? The KITTI Vision Bench-
+     gel. What value covariance information in estimating vision
+                                                                                     mark Suite. In CVPR, 2012. 1, 7
+     parameters? In ICCV, 2001. 2, 6
+                                                                                [21] Álvaro González. Measurement of areas on a sphere using
+ [6] Cesar Cadena, Luca Carlone, Henry Carrillo, Yasir Latif,                        ﬁbonacci and latitude–longitude lattices. Mathematical Geo-
+     Davide Scaramuzza, José Neira, Ian Reid, and John J                            sciences, 42, 2010. 5
+     Leonard. Past, present, and future of simultaneous localiza-               [22] W. Nicholas Greene and Nicholas Roy. Metrically-scaled
+     tion and mapping: Toward the robust-perception age. IEEE                        monocular SLAM using learned scale factors. In IEEE In-
+     Transactions on robotics, 32, 2016. 2                                           ternational Conference on Robotics and Automation (ICRA),
+ [7] Arthur Cayley. About the algebraic structure of the orthog-                     2020. 8
+     onal group and the other classical groups in a ﬁeld of char-               [23] Richard Hartley, Jochen Trumpf, Yuchao Dai, and Hongdong
+     acteristic zero or a prime characteristic. Reine Angewandte                     Li. Rotation averaging. International journal of computer
+     Mathematik, 32, 1846. 5                                                         vision, 103(3):267–305, 2013. 1
+ [8] Mahalanobis Prasanta Chandra et al. On the generalised dis-                [24] Richard I Hartley. In defense of the eight-point algorithm.
+     tance in statistics. In Proceedings of the National Institute of                IEEE Transactions on pattern analysis and machine intelli-
+     Sciences of India, 1936. 4                                                      gence, 19, 1997. 1, 2, 7
+ [9] Chee-Kheng Chng, Álvaro Parra, Tat-Jun Chin, and Yasir                    [25] R. I. Hartley and A. Zisserman. Multiple View Geometry
+     Latif. Monocular rotational odometry with incremental rota-                     in Computer Vision. Cambridge University Press, second
+     tion averaging and loop closure. Digital Image Computing:                       edition, 2004. 1, 2, 7
+     Techniques and Applications (DICTA), 2020. 2, 3, 6, 7, 8                   [26] Douglas R Hartree. The wave mechanics of an atom with
+[10] Alejo Concha, Michael Burri, Jesús Briales, Christian                          a non-coulomb central ﬁeld. part i. theory and methods. In
+     Forster, and Luc Oth. Instant visual odometry initialization                    Mathematical Proceedings of the Cambridge Philosophical
+     for mobile ar. IEEE Transactions on Visualization and Com-                      Society, 1928. 5
+     puter Graphics, 27, 2021. 3                                                [27] Christoph Hertzberg, René Wagner, Udo Frese, and Lutz
+                                                                                     Schröder. Integrating generic sensor fusion algorithms with
+[11] Igor Cvišić, Josip Ćesić, Ivan Marković, and Ivan Petrović.
+                                                                                     sound state representations through encapsulation of mani-
+     Soft-slam: Computationally efﬁcient stereo visual simulta-
+                                                                                     folds. Inf. Fusion, 14, 2013. 5
+     neous localization and mapping for autonomous unmanned
+                                                                                [28] Kenichi Kanatani. For geometric inference from images,
+     aerial vehicles. Journal of ﬁeld robotics, 2018. 3
+                                                                                     what kind of statistical model is necessary? Systems and
+[12] Igor Cvišić, Ivan Marković, and Ivan Petrović. Recalibrat-                  Computers in Japan, 35, 2004. 2
+     ing the KITTI Dataset Camera Setup for Improved Odom-
+                                                                                [29] Kenichi Kanatani. Statistical optimization for geometric ﬁt-
+     etry Accuracy. In European Conference on Mobile Robots
+                                                                                     ting: Theoretical accuracy bound and high order error anal-
+     (ECMR), 2021. 3
+                                                                                     ysis. IJCV, 80, 2008. 2
+[13] Leyza Baldo Dorini and Siome Klein Goldenstein. Un-                        [30] Y. Kanazawa and K. Kanatani. Do we really have to consider
+     scented feature tracking. Computer Vision and Image Un-                         covariance matrices for image features? In ICCV, 2001. 2
+     derstanding, 115, 2011. 2                                                  [31] Georg Klein and David Murray. Parallel tracking and map-
+[14] J. Engel, V. Koltun, and D. Cremers. Direct sparse odom-                        ping for small ar workspaces. In IEEE and ACM Interna-
+     etry. IEEE Transactions on Pattern Analysis and Machine                         tional Symposium on Mixed and Augmented Reality, 2007.
+     Intelligence, 2018. 2, 3                                                        3
+[15] J. Engel, T. Schöps, and D. Cremers. LSD-SLAM: Large-                     [32] Laurent Kneip and Paul Furgale. Opengv: A uniﬁed and gen-
+     scale direct monocular SLAM. In ECCV, 2014. 2, 3                                eralized approach to real-time calibrated geometric vision. In
+[16] Kaveh Fathian, J Pablo Ramirez-Paredes, Emily A Doucette,                       IEEE International Conference on Robotics and Automation
+     J Willard Curtis, and Nicholas R Gans. Quest: A quaternion-                     (ICRA), 2014. 7
+     based approach for camera motion estimation from minimal                   [33] Laurent Kneip and Simon Lynen. Direct optimization of
+     feature points. IEEE Robotics and Automation Letters (RAL),                     frame-to-frame rotation. In ICCV, 2013. 1, 2, 4, 5, 6, 7,
+     3, 2018. 2                                                                      8
+
+
+
+
+                                                                         1817
+
+Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+[34] Laurent Kneip, Roland Siegwart, and Marc Pollefeys. Find-                  [54] R.M. Steele and C. Jaynes. Feature uncertainty arising from
+     ing the exact rotation between two images independently of                      covariant image noise. In CVPR, 2005. 2
+     the translation. In ECCV, 2012. 1, 2, 3, 4, 8                              [55] Henrik Stewenius, Christopher Engels, and David Nistér.
+[35] Erwin Kruppa. Zur Ermittlung eines Objektes aus zwei Per-                       Recent developments on direct relative orientation. ISPRS
+     spektiven mit innerer Orientierung. Hölder, 1913. 2                            Journal of Photogrammetry and Remote Sensing, 60, 2006.
+[36] Zuzana Kukelova, Martin Bujnak, and Tomas Pajdla. Poly-                         2
+     nomial eigenvalue solutions to the 5-pt and 6-pt relative pose             [56] Henrik Stewénius, David Nistér, Magnus Oskarsson, and
+     problems. In BMVC, 2008. 2                                                      Kalle Åström. Solutions to minimal generalized relative pose
+[37] Charles Lawrence Lawson. Contribution to the theory of lin-                     problems. Workshop on omnidirectional vision, 2005. 2, 7
+     ear least maximum approximation. PhD thesis, University of                 [57] Richard Szeliski. Computer vision: algorithms and applica-
+     California, 1961. 5                                                             tions. Springer Science & Business Media, 2010. 2
+[38] S. H. Lee and Javier Civera. Geometric interpretations of the              [58] Carlo Tomasi and Takeo Kanade. Detection and tracking of
+     normalized epipolar error. ArXiv, abs/2008.01254, 2020. 4                       point features. IJCV, 9, 1991. 2, 6
+[39] Seong Hun Lee and Javier Civera. Rotation-only bundle ad-                  [59] Bill Triggs, Philip F McLauchlan, Richard I Hartley, and An-
+     justment. In CVPR, 2021. 2, 3                                                   drew W Fitzgibbon. Bundle adjustment—a modern synthe-
+[40] Kenneth Levenberg. A method for the solution of certain                         sis. In International workshop on vision algorithms, 1999.
+     non-linear problems in least squares. Quarterly of applied                      2
+     mathematics, 2, 1944. 4
+                                                                                [60] Jeffrey K Uhlmann. Dynamic map building and localiza-
+[41] Hongdong Li and Richard Hartley. Five-point motion es-                          tion: New theoretical foundations. PhD thesis, University of
+     timation made easy. In IEEE International Conference on                         Oxford Oxford, 1995. 2, 4
+     Pattern Recognition (ICPR), 2006. 2
+                                                                                [61] Vladyslav Usenko, Nikolaus Demmel, David Schubert, Jörg
+[42] John Lim, Nick Barnes, and Hongdong Li. Estimating rel-
+                                                                                     Stückler, and Daniel Cremers. Visual-inertial mapping with
+     ative camera motion from the antipodal-epipolar constraint.
+                                                                                     non-linear factor recovery. IEEE Robotics and Automation
+     IEEE TPAMI, 32, 2010. 2
+                                                                                     Letters (RAL), 5, 2020. 3, 7, 8
+[43] HC Longuet-Higgins. Readings in computer vision: issues,
+                                                                                [62] Nan Yang, Lukas von Stumberg, Rui Wang, and Daniel Cre-
+     problems, principles, and paradigms. A computer algorithm
+                                                                                     mers. D3VO: deep depth, deep pose and deep uncertainty
+     for reconstructing a scene from two projections, 1987. 1, 2
+                                                                                     for monocular visual odometry. In CVPR, 2020. 8
+[44] David G Lowe. Distinctive image features from scale-
+     invariant keypoints. IJCV, 60, 2004. 2                                     [63] Nan Yang, Rui Wang, Jörg Stückler, and Daniel Cremers.
+                                                                                     Deep virtual stereo odometry: Leveraging deep depth predic-
+[45] Bruce D. Lucas and Takeo Kanade. An iterative image reg-
+                                                                                     tion for monocular direct sparse odometry. In ECCV, 2018.
+     istration technique with an application to stereo vision. In
+                                                                                     8
+     International Joint Conference on Artiﬁcial Intelligence (IJ-
+     CAI), 1981. 2, 6                                                           [64] Bernhard Zeisl, Pierre Georgel, Florian Schweiger, Eckehard
+[46] Donald W Marquardt. An algorithm for least-squares esti-                        Steinbach, and Nassir Navab. Estimation of location uncer-
+     mation of nonlinear parameters. Journal of the society for                      tainty for scale invariant feature points. In BMVC, 2009. 2
+     Industrial and Applied Mathematics, 11, 1963. 4                            [65] Hongmou Zhang, Denis Grießbach, Jürgen Wohlfeil, and
+[47] Jochen Meidow, Christian Beder, and Wolfgang Förstner.                         Anko Börner. Uncertainty model for template feature match-
+     Reasoning with uncertain points, straight lines, and straight                   ing. In Paciﬁc-Rim Symposium on Image and Video Technol-
+     line segments in 2d. ISPRS Journal of Photogrammetry and                        ogy, pages 406–420. Springer, 2017. 2
+     Remote Sensing, 64, 2009. 2                                                [66] Lei-Hong Zhang. On optimizing the sum of the rayleigh quo-
+[48] Pierre Moulon, Pascal Monasse, and Renaud Marlet. Global                        tient and the generalized rayleigh quotient on the unit sphere.
+     fusion of relative motions for robust, accurate and scalable                    Computational Optimization and Applications, 54, 2013. 5
+     structure from motion. In Proceedings of the IEEE Inter-                   [67] Lei-Hong Zhang and Rui Chang. A nonlinear eigenvalue
+     national Conference on Computer Vision, pages 3248–3255,                        problem associated with the sum-of-rayleigh-quotients max-
+     2013. 1                                                                         imization. Transactions on Applied Mathematics, 2, 2021.
+[49] R. Mur-Artal, J. M. M. Montiel, and J. D. Tardós. Orb-                         5
+     slam: A versatile and accurate monocular slam system. IEEE
+     Transactions on Robotics, 31, 2015. 3
+[50] R. Mur-Artal and J. D. Tardós. Orb-slam2: An open-source
+     slam system for monocular, stereo, and rgb-d cameras. IEEE
+     Transactions on Robotics, 33, 2017. 3
+[51] D. Nister. An efﬁcient solution to the ﬁve-point relative pose
+     problem. In CVPR, 2003. 2, 7
+[52] Jorge Nocedal and Stephen J. Wright. Numerical Optimiza-
+     tion. Springer, 1999. 5
+[53] Sameer Sheorey, Shalini Keshavamurthy, Huili Yu, Hieu
+     Nguyen, and Clark N Taylor. Uncertainty estimation for klt
+     tracking. In Asian Conference on Computer Vision, 2014. 2
+
+
+
+
+                                                                         1818
+
+Authorized licensed use limited to: Harbin Institute of Technology. Downloaded on December 15,2025 at 07:57:46 UTC from IEEE Xplore. Restrictions apply.
+

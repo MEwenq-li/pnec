@@ -67,6 +67,7 @@ bool FrameProcessing::ProcessFrame(pnec::frames::BaseFrame::Ptr frame,
 
   // no pose estimation for the first frame
   if (m <= skip + 1) {
+    curr_view->Pose() = Sophus::SE3d();
     view_graph_->AddView(curr_view);
     return true;
   }
@@ -105,13 +106,14 @@ bool FrameProcessing::ProcessFrame(pnec::frames::BaseFrame::Ptr frame,
                            << host_frame->id() << " and " << target_frame->id();
   Sophus::SE3d rel_pose = f2f_pose_estimation_->Align(
       host_frame, target_frame, matches, prev_pose, inliers, frame_timing,
-      false, results_folder + "ablation/");
+      false, results_folder + "ablation/", results_folder);
 
   view_graph_->AddView(curr_view);
   bool success = view_graph_->Connect(prev_view, curr_view, matches, rel_pose);
   if (!success) {
     return false;
   }
+  curr_view->Pose() = prev_view->Pose() * rel_pose;
   view_graph_->ShortenViewGraph();
 
   // pnec::visualization::plotMatches(host_frame, target_frame, matches,
@@ -163,7 +165,7 @@ bool FrameProcessing::ProcessUncertaintyExtraction(
   pnec::common::FrameTiming dummy_timing(0);
   Sophus::SE3d rel_pose = f2f_pose_estimation_->Align(
       host_frame, target_frame, matches, init_pose, inliers, dummy_timing,
-      false, results_folder + "ablation/");
+      false, results_folder + "ablation/", results_folder);
   std::cout << "Finished aligning" << std::endl;
   std::cout << "Found " << inliers.size() << " inliers." << std::endl;
 
@@ -232,7 +234,7 @@ bool FrameProcessing::ProcessUncertaintyExtractionVO(
   pnec::common::FrameTiming dummy_timing(0);
   Sophus::SE3d rel_pose = f2f_pose_estimation_->Align(
       prev_frame, curr_frame, matches, init_pose, inliers, dummy_timing, false,
-      results_folder + "ablation/");
+      results_folder + "ablation/", results_folder);
 
   BOOST_LOG_TRIVIAL(info) << "Found: " << inliers.size() << " inliers.";
 

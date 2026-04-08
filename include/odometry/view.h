@@ -73,7 +73,8 @@ public:
 
   typedef std::map<pnec::odometry::View::Ptr, Connection *> Connections;
 
-  View(pnec::frames::BaseFrame::Ptr frame) : frame_{frame} {}
+  View(pnec::frames::BaseFrame::Ptr frame)
+      : frame_{frame}, pose_{Sophus::SE3d()} {}
 
   pnec::frames::BaseFrame::Ptr Frame() { return frame_; }
 
