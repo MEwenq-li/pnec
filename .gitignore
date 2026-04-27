@@ -12,3 +12,5 @@ basalt_inspect/
 *.png
 *.csv
 /ref_OminScape-VIO_InEKF
+python_runs*/
+python_eval*/
